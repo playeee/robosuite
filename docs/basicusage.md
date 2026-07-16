@@ -1,39 +1,38 @@
-# Basic Usage
+# 基本用法
 
-## Running Standardized Environments
-**robosuite** offers a set of standardized manipulation tasks for benchmarking purposes. These pre-defined environments can be easily instantiated with the `make` function. The APIs we provide to interact with our environments are simple and similar to the ones used by [OpenAI Gym](https://github.com/openai/gym/). Below is a minimalistic example of how to interact with an environment.
+## 运行标准化环境
+**robosuite** 提供了一组用于基准测试的标准化操作任务。这些预定义的环境可以通过 `make` 函数轻松实例化。我们提供的与环境交互的 API 很简单，并且与 [OpenAI Gym](https://github.com/openai/gym/) 使用的 API 类似。下面是一个与环境交互的最简示例。
 
 <div class="admonition warning">
-<p class="admonition-title">Attention Mac users!</p>
+<p class="admonition-title">Mac 用户请注意！</p>
 
-Mac users who wish to use the default mjviewer renderer need to prepend the "python" command with "mj": `mjpython ...`
+希望使用默认 mjviewer 渲染器的 Mac 用户需要在 "python" 命令前加上 "mj" 前缀：`mjpython ...`
 </div>
 
 ```python
 import numpy as np
 import robosuite as suite
 
-# create environment instance
+# 创建环境实例
 env = suite.make(
-    env_name="Lift", # try with other tasks like "Stack" and "Door"
-    robots="Panda",  # try with other robots like "Sawyer" and "Jaco"
+    env_name="Lift", # 可尝试其他任务，如 "Stack" 和 "Door"
+    robots="Panda",  # 可尝试其他机器人，如 "Sawyer" 和 "Jaco"
     has_renderer=True,
     has_offscreen_renderer=False,
     use_camera_obs=False,
 )
 
-# reset the environment
+# 重置环境
 env.reset()
 
 for i in range(1000):
     action = np.random.randn(*env.action_spec[0].shape) * 0.1
-    obs, reward, done, info = env.step(action)  # take action in the environment
-    env.render()  # render on display
+    obs, reward, done, info = env.step(action)  # 在环境中执行动作
+    env.render()  # 在显示器上渲染
 ````
 
-This script above creates a simulated environment with the on-screen renderer, which is useful for visualization and qualitative evaluation. The `step()` function takes an `action` as input and returns a tuple of `(obs, reward, done, info)` where `obs` is an `OrderedDict` containing observations `[(name_string, np.array), ...]`, `reward` is the immediate reward obtained per step, `done` is a Boolean flag indicating if the episode has terminated and `info` is a dictionary which contains additional metadata.
+上面的脚本创建了一个带有屏幕渲染器的仿真环境，可用于可视化和定性评估。`step()` 函数接受一个 `action` 作为输入，并返回一个元组 `(obs, reward, done, info)`，其中 `obs` 是一个包含观测值 `[(name_string, np.array), ...]` 的 `OrderedDict`，`reward` 是每步获得的即时奖励，`done` 是一个布尔标志，指示 episode 是否已终止，`info` 是一个包含额外元数据的字典。
 
-Many other parameters can be configured for each environment. They provide functionalities such as headless rendering, getting pixel observations, changing camera settings, using reward shaping, and adding extra low-level observations. Please refer to [Environment](modules/environments) modules and the [Environment class](simulation/environment) APIs for further details.
+每个环境还可以配置许多其他参数。它们提供的功能包括无头渲染、获取像素观测、更改相机设置、使用奖励塑造以及添加额外的低级观测。详情请参阅 [Environment](modules/environments) 模块和 [Environment 类](simulation/environment) API。
 
-Demo scripts that showcase various features of **robosuite** are available [here](demos). The purpose of each script and usage instructions can be found at the beginning of each file.
-
+展示 **robosuite** 各种功能的演示脚本可在[此处](demos)获取。每个脚本的用途和使用说明可在每个文件的开头找到。

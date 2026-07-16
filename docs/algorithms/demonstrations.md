@@ -1,65 +1,65 @@
-# Human Demonstrations
+# 人类演示
 
-## Collecting Human Demonstrations
+## 收集人类演示
 
-We provide teleoperation utilities that allow users to control the robots with input devices, such as the keyboard, [SpaceMouse](https://www.3dconnexion.com/spacemouse_compact/en/), [DualSense](https://www.playstation.com/en-us/accessories/dualsense-wireless-controller/) and mujoco-gui. Such functionality allows us to collect a dataset of human demonstrations for learning. We provide an example script to illustrate how to collect demonstrations. Our [collect_human_demonstrations](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/collect_human_demonstrations.py) script takes the following arguments:
+我们提供了遥操作工具，允许用户使用输入设备（如键盘、[SpaceMouse](https://www.3dconnexion.com/spacemouse_compact/en/)、[DualSense](https://www.playstation.com/en-us/accessories/dualsense-wireless-controller/) 和 mujoco-gui）控制机器人。此功能使我们能够收集用于学习的人类演示数据集。我们提供了一个示例脚本来演示如何收集演示。我们的 [collect_human_demonstrations](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/collect_human_demonstrations.py) 脚本接受以下参数：
 
-- `directory:` path to a folder for where to store the pickle file of collected demonstrations
-- `environment:` name of the environment you would like to collect the demonstrations for
-- `device:` either "keyboard" or "spacemouse" or "dualsense" or "mjgui"
-- `renderer:` Mujoco's builtin interactive viewer (mjviewer) or OpenCV viewer (mujoco)
-- `camera:` Pass multiple camera names to enable multiple views. Note that the "mujoco" renderer must be enabled when using multiple views, while "mjviewer" is not supported.
+- `directory:` 用于存储收集的演示 pickle 文件的文件夹路径
+- `environment:` 您希望为其收集演示的环境名称
+- `device:` "keyboard"、"spacemouse"、"dualsense" 或 "mjgui" 之一
+- `renderer:` Mujoco 的内置交互式查看器（mjviewer）或 OpenCV 查看器（mujoco）
+- `camera:` 传递多个相机名称以启用多个视图。请注意，使用多个视图时必须启用 "mujoco" 渲染器，不支持 "mjviewer"。
 
-See the [devices page](https://robosuite.ai/docs/modules/devices.html) for details on how to use the devices.
+有关如何使用设备的详细信息，请参阅[设备页面](https://robosuite.ai/docs/modules/devices.html)。
 
-## Replaying Human Demonstrations
+## 回放人类演示
 
-We have included an example script that illustrates how demonstrations can be loaded and played back. Our [playback_demonstrations_from_hdf5](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/playback_demonstrations_from_hdf5.py) script selects demonstration episodes at random from a demonstration pickle file and replays them.
-
-
-## Existing Datasets
-
-We have included some sample demonstrations for each task at `models/assets/demonstrations`.
+我们包含了一个示例脚本，演示如何加载和回放演示。我们的 [playback_demonstrations_from_hdf5](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/playback_demonstrations_from_hdf5.py) 脚本从演示 pickle 文件中随机选择演示 episode 并回放它们。
 
 
-## Structure of collected demonstrations
+## 现有数据集
 
-Every set of demonstrations is collected as a `demo.hdf5` file. The `demo.hdf5` file is structured as follows.
+我们在 `models/assets/demonstrations` 中为每个任务提供了一些示例演示。
 
-- data (group)
 
-  - date (attribute) - date of collection
+## 收集演示的结构
 
-  - time (attribute) - time of collection
+每组演示都收集为 `demo.hdf5` 文件。`demo.hdf5` 文件的结构如下。
 
-  - repository_version (attribute) - repository version used during collection
+- data（组）
 
-  - env (attribute) - environment name on which demos were collected
+  - date（属性）- 收集日期
 
-  - demo1 (group) - group for the first demonstration (every demonstration has a group)
+  - time（属性）- 收集时间
 
-    - model_file (attribute) - the xml string corresponding to the MJCF mujoco model
+  - repository_version（属性）- 收集时使用的仓库版本
 
-    - states (dataset) - flattened mujoco states, ordered by time
+  - env（属性）- 收集演示的环境名称
 
-    - actions (dataset) - environment actions, ordered by time
+  - demo1（组）- 第一个演示的组（每个演示都有一个组）
 
-  - demo2 (group) - group for the second demonstration
+    - model_file（属性）- 对应于 MJCF mujoco 模型的 xml 字符串
+
+    - states（数据集）- 按时间排序的扁平化 mujoco 状态
+
+    - actions（数据集）- 按时间排序的环境动作
+
+  - demo2（组）- 第二个演示的组
 
     ... 
 
-    (and so on)
+    （以此类推）
 
-The reason for storing mujoco states instead of raw observations is to make it easy to retrieve different kinds of observations in a postprocessing step. This also saves disk space (image datasets are much larger).
+存储 mujoco 状态而非原始观测的原因是为了便于在后处理步骤中检索不同类型的观测。这也节省了磁盘空间（图像数据集要大得多）。
 
 
-## Using Demonstrations for Learning
+## 使用演示进行学习
 
-The [robomimic](https://arise-initiative.github.io/robomimic-web/) framework makes it easy to train policies using your own [datasets collected with robosuite](https://arise-initiative.github.io/robomimic-web/docs/introduction/datasets.html#robosuite-hdf5-datasets). The framework also contains many useful examples for how to integrate hdf5 datasets into your own learning pipeline.
+[robomimic](https://arise-initiative.github.io/robomimic-web/) 框架使得使用您自己的[使用 robosuite 收集的数据集](https://arise-initiative.github.io/robomimic-web/docs/introduction/datasets.html#robosuite-hdf5-datasets)训练策略变得容易。该框架还包含许多有用的示例，说明如何将 hdf5 数据集集成到您自己的学习流水线中。
 
-The robosuite repository also has some utilities for using the demonstrations to alter the start state distribution of training episodes for learning RL policies - this have proved effective in [several](https://arxiv.org/abs/1802.09564) [prior](https://arxiv.org/abs/1807.06919) [works](https://arxiv.org/abs/1804.02717). For example, we provide a generic utility for setting various types of learning curriculums which dictate how to sample from demonstration episodes when doing an environment reset. For more information see the `DemoSamplerWrapper` class.
+robosuite 仓库还有一些实用工具，可用于使用演示改变训练 RL 策略时 episode 的初始状态分布——这在[几项](https://arxiv.org/abs/1802.09564)[先前](https://arxiv.org/abs/1807.06919)[工作](https://arxiv.org/abs/1804.02717)中已被证明有效。例如，我们提供了一个通用工具，用于设置各种类型的学习课程，规定在执行环境重置时如何从演示 episode 中采样。更多信息请参见 `DemoSamplerWrapper` 类。
 
-## Warnings
-We have verified that deterministic action playback works specifically when playing back demonstrations on the *same machine* that the demonstrations were originally collected upon. However, this means that deterministic action playback is NOT guaranteed (in fact, very unlikely) to work across platforms or even across different machines using the same OS.
+## 警告
+我们已验证，确定性动作回放专门在*最初收集演示的同一台机器*上回放演示时有效。然而，这意味着确定性动作回放不能保证（实际上非常不可能）跨平台甚至在相同操作系统的不同机器上工作。
 
-While action playback trajectories are quite similar even if not completely identical to the original collected state trajectories, they do tend to drift over time, and should not be relied upon to accurately replicate demonstrations. Instead, we recommend directly setting states to reproduce the collected trajectories, as shown in [playback_demonstrations_from_hdf5](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/playback_demonstrations_from_hdf5.py).
+虽然动作回放轨迹与原始收集的状态轨迹即使不完全相同也相当相似，但它们确实会随时间漂移，不应依赖它们来准确复制演示。相反，我们建议直接设置状态以重现收集的轨迹，如 [playback_demonstrations_from_hdf5](https://github.com/ARISE-Initiative/robosuite/blob/master/robosuite/scripts/playback_demonstrations_from_hdf5.py) 所示。

@@ -1,8 +1,26 @@
 """
-Modder classes used for domain randomization. Largely based off of the mujoco-py
-implementation below.
+用于域随机化（Domain Randomization, DR）的 Modder 类集合。
 
-https://github.com/openai/mujoco-py/blob/1fe312b09ae7365f0dd9d4d0e453f8da59fae0bf/mujoco_py/modder.py
+本模块大量参考了 mujoco-py 的实现：
+    https://github.com/openai/mujoco-py/blob/1fe312b09ae7365f0dd9d4d0e453f8da59fae0bf/mujoco_py/modder.py
+
+=============================================================================
+【核心概念】Modder 是什么？
+=============================================================================
+
+在 sim2real 中，我们希望智能体对仿真参数的变化具有鲁棒性。
+Modder（修改器）的作用就是在仿真运行过程中，动态修改 MuJoCo 模型的各类属性：
+    - LightingModder:   随机化光源的位置、方向、颜色、开关状态
+    - CameraModder:     随机化相机的位置、朝向、视场角（fovy）
+    - TextureModder:    随机化物体/天空盒的颜色与纹理（rgb / checker / noise / gradient）
+    - DynamicsModder:   随机化物理动力学参数（摩擦、质量、惯量、阻尼、刚度等）
+
+每个 Modder 都继承自 BaseModder，负责：
+    1. save_defaults():   保存原始参数，便于恢复
+    2. randomize():       按配置对参数进行随机扰动
+    3. restore_defaults(): 恢复到原始参数
+
+使用独立的 random_state 可以保证 Modder 内的随机采样不会影响外部其它随机过程。
 """
 
 import copy
@@ -19,33 +37,32 @@ from robosuite.utils.binding_utils import MjRenderContextOffscreen
 
 class BaseModder:
     """
-    Base class meant to modify simulation attributes mid-sim.
+    Modder 的基类，用于在仿真运行期间修改仿真属性。
 
-    Using @random_state ensures that sampling here won't be affected
-    by sampling that happens outside of the modders.
+    使用独立的 @random_state 可以确保 Modder 内部的采样不会受到 Modder 外部
+    随机采样过程的影响，便于复现实验与控制随机性来源。
 
     Args:
-        sim (MjSim): simulation object
+        sim (MjSim): MuJoCo 仿真对象
 
-        random_state (RandomState): instance of np.random.RandomState, specific
-            seed used to randomize these modifications without impacting other
-            numpy seeds / randomizations
+        random_state (RandomState): np.random.RandomState 实例，用于对修改项进行随机化。
+            若传入特定 RandomState，则 Modder 的随机性被隔离；若为 None，则使用全局随机状态。
     """
 
     def __init__(self, sim, random_state=None):
         self.sim = sim
         if random_state is None:
-            # default to global RandomState instance
+            # 若未指定随机状态，则退化为使用全局 RandomState 实例
             self.random_state = np.random.mtrand._rand
         else:
             self.random_state = random_state
 
     def update_sim(self, sim):
         """
-        Setter function to update internal sim variable
+        更新内部保存的仿真对象引用。
 
         Args:
-            sim (MjSim): MjSim object
+            sim (MjSim): 新的 MjSim 对象
         """
         self.sim = sim
 
@@ -53,45 +70,47 @@ class BaseModder:
     def model(self):
         """
         Returns:
-            MjModel: Mujoco sim model
+            MjModel: 当前 MjSim 的 MuJoCo 模型
         """
-        # Available for quick convenience access
+        # 提供快速便捷访问：直接返回 sim.model
         return self.sim.model
 
 
 class LightingModder(BaseModder):
     """
-    Modder to modify lighting within a Mujoco simulation.
+    用于修改 MuJoCo 仿真中光照属性的 Modder。
+
+    可对光源的位置、方向、镜面反射（specular）、环境光（ambient）、漫反射（diffuse）
+    以及是否激活（active）等属性进行随机化，从而增强视觉策略对光照变化的鲁棒性。
 
     Args:
-        sim (MjSim): MjSim object
+        sim (MjSim): MjSim 对象
 
-        random_state (RandomState): instance of np.random.RandomState
+        random_state (RandomState): np.random.RandomState 实例
 
-        light_names (None or list of str): list of lights to use for randomization. If not provided, all
-            lights in the model are randomized.
+        light_names (None 或 str 列表): 要参与随机化的光源名称列表。若为 None，则模型中所有光源都会被随机化。
 
-        randomize_position (bool): If True, randomizes position of lighting
+        randomize_position (bool): 若为 True，随机化光源位置
 
-        randomize_direction (bool): If True, randomizes direction of lighting
+        randomize_direction (bool): 若为 True，随机化光源方向
 
-        randomize_specular (bool): If True, randomizes specular attribute of lighting
+        randomize_specular (bool): 若为 True，随机化光源的镜面反射属性
 
-        randomize_ambient (bool): If True, randomizes ambient attribute of lighting
+        randomize_ambient (bool): 若为 True，随机化光源的环境光属性
 
-        randomize_diffuse (bool): If True, randomizes diffuse attribute of lighting
+        randomize_diffuse (bool): 若为 True，随机化光源的漫反射属性
 
-        randomize_active (bool): If True, randomizes active nature of lighting
+        randomize_active (bool): 若为 True，随机化光源的开关状态
 
-        position_perturbation_size (float): Magnitude of position randomization
+        position_perturbation_size (float): 位置随机化的扰动幅度
 
-        direction_perturbation_size (float): Magnitude of direction randomization
+        direction_perturbation_size (float): 方向随机化的扰动幅度（默认 0.35 弧度约等于 20°）
 
-        specular_perturbation_size (float): Magnitude of specular attribute randomization
+        specular_perturbation_size (float): 镜面反射属性随机化的扰动幅度
 
-        ambient_perturbation_size (float): Magnitude of ambient attribute randomization
+        ambient_perturbation_size (float): 环境光属性随机化的扰动幅度
 
-        diffuse_perturbation_size (float): Magnitude of diffuse attribute randomization
+        diffuse_perturbation_size (float): 漫反射属性随机化的扰动幅度
     """
 
     def __init__(
@@ -134,7 +153,11 @@ class LightingModder(BaseModder):
 
     def save_defaults(self):
         """
-        Uses the current MjSim state and model to save default parameter values.
+        根据当前 MjSim 的状态与模型保存各光源的默认参数值。
+
+        这些默认值后续用于：
+            1. randomize(): 在默认值基础上加扰动
+            2. restore_defaults(): 恢复原始光照配置
         """
         self._defaults = {k: {} for k in self.light_names}
         for name in self.light_names:
@@ -147,7 +170,7 @@ class LightingModder(BaseModder):
 
     def restore_defaults(self):
         """
-        Reloads the saved parameter values.
+        重新加载保存的默认参数值，恢复光照到随机化之前的状态。
         """
         for name in self.light_names:
             self.set_pos(name, self._defaults[name]["pos"])
@@ -159,7 +182,7 @@ class LightingModder(BaseModder):
 
     def randomize(self):
         """
-        Randomizes all requested lighting values within the sim
+        对仿真中所有请求随机化的光照属性进行随机化。
         """
         for name in self.light_names:
             if self.randomize_position:
@@ -182,11 +205,12 @@ class LightingModder(BaseModder):
 
     def _randomize_position(self, name):
         """
-        Helper function to randomize position of a specific light source
+        对指定光源的位置进行随机化。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
+        # 在默认值基础上叠加一个均匀分布的随机位置扰动
         delta_pos = self.random_state.uniform(
             low=-self.position_perturbation_size,
             high=self.position_perturbation_size,
@@ -199,18 +223,18 @@ class LightingModder(BaseModder):
 
     def _randomize_direction(self, name):
         """
-        Helper function to randomize direction of a specific light source
+        对指定光源的方向进行随机化。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
-        # sample a small, random axis-angle delta rotation
+        # 采样一个小的随机轴角增量旋转，用于扰动光源方向
         random_axis, random_angle = trans.random_axis_angle(
             angle_limit=self.direction_perturbation_size, random_state=self.random_state
         )
         random_delta_rot = trans.quat2mat(trans.axisangle2quat(random_axis * random_angle))
 
-        # rotate direction by this delta rotation and set the new direction
+        # 用该增量旋转对默认方向进行旋转，得到新的方向
         new_dir = random_delta_rot.dot(self._defaults[name]["dir"])
         self.set_dir(
             name,
@@ -219,10 +243,10 @@ class LightingModder(BaseModder):
 
     def _randomize_specular(self, name):
         """
-        Helper function to randomize specular attribute of a specific light source
+        对指定光源的镜面反射（specular）属性进行随机化。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
         delta = self.random_state.uniform(
             low=-self.specular_perturbation_size,
@@ -236,10 +260,10 @@ class LightingModder(BaseModder):
 
     def _randomize_ambient(self, name):
         """
-        Helper function to randomize ambient attribute of a specific light source
+        对指定光源的环境光（ambient）属性进行随机化。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
         delta = self.random_state.uniform(
             low=-self.ambient_perturbation_size,
@@ -253,10 +277,10 @@ class LightingModder(BaseModder):
 
     def _randomize_diffuse(self, name):
         """
-        Helper function to randomize diffuse attribute of a specific light source
+        对指定光源的漫反射（diffuse）属性进行随机化。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
         delta = self.random_state.uniform(
             low=-self.diffuse_perturbation_size,
@@ -270,26 +294,27 @@ class LightingModder(BaseModder):
 
     def _randomize_active(self, name):
         """
-        Helper function to randomize active nature of a specific light source
+        随机决定指定光源是否激活（开/关）。
 
         Args:
-            name (str): Name of the lighting source to randomize for
+            name (str): 要随机化的光源名称
         """
+        # 以 0.5 概率决定光源开启或关闭
         active = int(self.random_state.uniform() > 0.5)
         self.set_active(name, active)
 
     def get_pos(self, name):
         """
-        Grabs position of a specific light source
+        获取指定光源的位置。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            np.array: (x,y,z) position of lighting source
+            np.array: 光源的 (x, y, z) 位置
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -298,15 +323,15 @@ class LightingModder(BaseModder):
 
     def set_pos(self, name, value):
         """
-        Sets position of a specific light source
+        设置指定光源的位置。
 
         Args:
-            name (str): Name of the lighting source
-            value (np.array): (x,y,z) position to set lighting source to
+            name (str): 光源名称
+            value (np.array): 要设置的光源 (x, y, z) 位置
 
         Raises:
-            AssertionError: Invalid light name
-            AssertionError: Invalid @value
+            AssertionError: 光源名称无效
+            AssertionError: value 维度无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -318,16 +343,16 @@ class LightingModder(BaseModder):
 
     def get_dir(self, name):
         """
-        Grabs direction of a specific light source
+        获取指定光源的方向。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            np.array: (x,y,z) direction of lighting source
+            np.array: 光源的 (x, y, z) 方向向量
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -339,12 +364,12 @@ class LightingModder(BaseModder):
         Sets direction of a specific light source
 
         Args:
-            name (str): Name of the lighting source
-            value (np.array): (ax,ay,az) direction to set lighting source to
+            name (str): 光源名称
+            value (np.array): 要设置的光源方向向量 (ax, ay, az)
 
         Raises:
-            AssertionError: Invalid light name
-            AssertionError: Invalid @value
+            AssertionError: 光源名称无效
+            AssertionError: value 维度无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -356,16 +381,16 @@ class LightingModder(BaseModder):
 
     def get_active(self, name):
         """
-        Grabs active nature of a specific light source
+        获取指定光源是否处于激活状态。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            int: Whether light source is active (1) or not (0)
+            int: 光源是否激活，1 表示开启，0 表示关闭
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -374,14 +399,14 @@ class LightingModder(BaseModder):
 
     def set_active(self, name, value):
         """
-        Sets active nature of a specific light source
+        设置指定光源的激活状态。
 
         Args:
-            name (str): Name of the lighting source
-            value (int): Whether light source is active (1) or not (0)
+            name (str): 光源名称
+            value (int): 1 表示开启，0 表示关闭
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -390,16 +415,16 @@ class LightingModder(BaseModder):
 
     def get_specular(self, name):
         """
-        Grabs specular attribute of a specific light source
+        获取指定光源的镜面反射（specular）颜色。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            np.array: (r,g,b) specular color of lighting source
+            np.array: 光源的 (r, g, b) 镜面反射颜色
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -408,15 +433,15 @@ class LightingModder(BaseModder):
 
     def set_specular(self, name, value):
         """
-        Sets specular attribute of a specific light source
+        设置指定光源的镜面反射（specular）颜色。
 
         Args:
-            name (str): Name of the lighting source
-            value (np.array): (r,g,b) specular color to set lighting source to
+            name (str): 光源名称
+            value (np.array): 要设置的 (r, g, b) 镜面反射颜色
 
         Raises:
-            AssertionError: Invalid light name
-            AssertionError: Invalid @value
+            AssertionError: 光源名称无效
+            AssertionError: value 维度无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -428,16 +453,16 @@ class LightingModder(BaseModder):
 
     def get_ambient(self, name):
         """
-        Grabs ambient attribute of a specific light source
+        获取指定光源的环境光（ambient）颜色。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            np.array: (r,g,b) ambient color of lighting source
+            np.array: 光源的 (r, g, b) 环境光颜色
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -446,15 +471,15 @@ class LightingModder(BaseModder):
 
     def set_ambient(self, name, value):
         """
-        Sets ambient attribute of a specific light source
+        设置指定光源的环境光（ambient）颜色。
 
         Args:
-            name (str): Name of the lighting source
-            value (np.array): (r,g,b) ambient color to set lighting source to
+            name (str): 光源名称
+            value (np.array): 要设置的 (r, g, b) 环境光颜色
 
         Raises:
-            AssertionError: Invalid light name
-            AssertionError: Invalid @value
+            AssertionError: 光源名称无效
+            AssertionError: value 维度无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -466,16 +491,16 @@ class LightingModder(BaseModder):
 
     def get_diffuse(self, name):
         """
-        Grabs diffuse attribute of a specific light source
+        获取指定光源的漫反射（diffuse）颜色。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            np.array: (r,g,b) diffuse color of lighting source
+            np.array: 光源的 (r, g, b) 漫反射颜色
 
         Raises:
-            AssertionError: Invalid light name
+            AssertionError: 光源名称无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -484,15 +509,15 @@ class LightingModder(BaseModder):
 
     def set_diffuse(self, name, value):
         """
-        Sets diffuse attribute of a specific light source
+        设置指定光源的漫反射（diffuse）颜色。
 
         Args:
-            name (str): Name of the lighting source
-            value (np.array): (r,g,b) diffuse color to set lighting source to
+            name (str): 光源名称
+            value (np.array): 要设置的 (r, g, b) 漫反射颜色
 
         Raises:
-            AssertionError: Invalid light name
-            AssertionError: Invalid @value
+            AssertionError: 光源名称无效
+            AssertionError: value 维度无效
         """
         lightid = self.get_lightid(name)
         assert lightid > -1, "Unkwnown light %s" % name
@@ -504,44 +529,46 @@ class LightingModder(BaseModder):
 
     def get_lightid(self, name):
         """
-        Grabs unique id number of a specific light source
+        获取指定光源在模型中的唯一 id。
 
         Args:
-            name (str): Name of the lighting source
+            name (str): 光源名称
 
         Returns:
-            int: id of lighting source. -1 if not found
+            int: 光源 id。若未找到则返回 -1
         """
         return self.model.light_name2id(name)
 
 
 class CameraModder(BaseModder):
     """
-    Modder for modifying camera attributes in mujoco sim
+    用于修改 MuJoCo 仿真中相机属性的 Modder。
+
+    相机的位置、朝向、视场角（fovy）等参数会被随机化，
+    从而让视觉策略对不同相机标定误差和拍摄角度具有鲁棒性。
 
     Args:
-        sim (MjSim): MjSim object
+        sim (MjSim): MjSim 对象
 
-        random_state (None or RandomState): instance of np.random.RandomState
+        random_state (None 或 RandomState): np.random.RandomState 实例
 
-        camera_names (None or list of str): list of camera names to use for randomization. If not provided,
-            all cameras are used for randomization.
+        camera_names (None 或 str 列表): 要参与随机化的相机名称列表。若为 None，则所有相机都会被随机化。
 
-        randomize_position (bool): if True, randomize camera position
+        randomize_position (bool): 若为 True，随机化相机位置
 
-        randomize_rotation (bool): if True, randomize camera rotation
+        randomize_rotation (bool): 若为 True，随机化相机朝向
 
-        randomize_fovy (bool): if True, randomize camera fovy
+        randomize_fovy (bool): 若为 True，随机化相机垂直视场角
 
-        position_perturbation_size (float): size of camera position perturbations to each dimension
+        position_perturbation_size (float): 相机位置每个维度的扰动幅度
 
-        rotation_perturbation_size (float): magnitude of camera rotation perturbations in axis-angle.
-            Default corresponds to around 5 degrees.
+        rotation_perturbation_size (float): 相机朝向轴角随机化的幅度（弧度）。
+            默认值 0.087 约等于 5°。
 
-        fovy_perturbation_size (float): magnitude of camera fovy perturbations (corresponds to focusing)
+        fovy_perturbation_size (float): 相机垂直视场角（fovy）的扰动幅度，对应焦距/视野的变化
 
     Raises:
-        AssertionError: [No randomization selected]
+        AssertionError: [未选择任何随机化项]
     """
 
     def __init__(
@@ -558,6 +585,7 @@ class CameraModder(BaseModder):
     ):
         super().__init__(sim, random_state=random_state)
 
+        # 必须至少选择一项相机属性进行随机化，否则无意义
         assert randomize_position or randomize_rotation or randomize_fovy
 
         if camera_names is None:
@@ -576,7 +604,7 @@ class CameraModder(BaseModder):
 
     def save_defaults(self):
         """
-        Uses the current MjSim state and model to save default parameter values.
+        保存当前相机的默认位置、朝向和视场角。
         """
         self._defaults = {k: {} for k in self.camera_names}
         for camera_name in self.camera_names:
@@ -586,7 +614,7 @@ class CameraModder(BaseModder):
 
     def restore_defaults(self):
         """
-        Reloads the saved parameter values.
+        恢复相机的默认参数值。
         """
         for camera_name in self.camera_names:
             self.set_pos(camera_name, self._defaults[camera_name]["pos"])
@@ -595,7 +623,7 @@ class CameraModder(BaseModder):
 
     def randomize(self):
         """
-        Randomizes all requested camera values within the sim
+        对仿真中所有请求随机化的相机属性进行随机化。
         """
         for camera_name in self.camera_names:
             if self.randomize_position:
@@ -609,10 +637,10 @@ class CameraModder(BaseModder):
 
     def _randomize_position(self, name):
         """
-        Helper function to randomize position of a specific camera
+        对指定相机的位置进行随机化。
 
         Args:
-            name (str): Name of the camera to randomize for
+            name (str): 要随机化的相机名称
         """
         delta_pos = self.random_state.uniform(
             low=-self.position_perturbation_size,
@@ -626,18 +654,19 @@ class CameraModder(BaseModder):
 
     def _randomize_rotation(self, name):
         """
-        Helper function to randomize orientation of a specific camera
+        对指定相机的朝向进行随机化。
 
         Args:
-            name (str): Name of the camera to randomize for
+            name (str): 要随机化的相机名称
         """
-        # sample a small, random axis-angle delta rotation
+        # 采样一个小的随机轴角增量旋转
         random_axis, random_angle = trans.random_axis_angle(
             angle_limit=self.rotation_perturbation_size, random_state=self.random_state
         )
         random_delta_rot = trans.quat2mat(trans.axisangle2quat(random_axis * random_angle))
 
-        # compute new rotation and set it
+        # 用该增量旋转对默认朝向进行扰动，并更新相机四元数
+        # 注意 MuJoCo 使用 wxyz 四元数约定，因此中间计算需要转换
         base_rot = trans.quat2mat(trans.convert_quat(self._defaults[name]["quat"], to="xyzw"))
         new_rot = random_delta_rot.T.dot(base_rot)
         new_quat = trans.convert_quat(trans.mat2quat(new_rot), to="wxyz")
@@ -648,10 +677,10 @@ class CameraModder(BaseModder):
 
     def _randomize_fovy(self, name):
         """
-        Helper function to randomize fovy of a specific camera
+        对指定相机的垂直视场角（fovy）进行随机化。
 
         Args:
-            name (str): Name of the camera to randomize for
+            name (str): 要随机化的相机名称
         """
         delta_fovy = self.random_state.uniform(
             low=-self.fovy_perturbation_size,
@@ -664,16 +693,16 @@ class CameraModder(BaseModder):
 
     def get_fovy(self, name):
         """
-        Grabs fovy of a specific camera
+        获取指定相机的垂直视场角（fovy）。
 
         Args:
-            name (str): Name of the camera
+            name (str): 相机名称
 
         Returns:
-            float: vertical field of view of the camera, expressed in degrees
+            float: 相机的垂直视场角，单位为度
 
         Raises:
-            AssertionError: Invalid camera name
+            AssertionError: 相机名称无效
         """
         camid = self.get_camid(name)
         assert camid > -1, "Unknown camera %s" % name
@@ -681,15 +710,15 @@ class CameraModder(BaseModder):
 
     def set_fovy(self, name, value):
         """
-        Sets fovy of a specific camera
+        设置指定相机的垂直视场角（fovy）。
 
         Args:
-            name (str): Name of the camera
-            value (float): vertical field of view of the camera, expressed in degrees
+            name (str): 相机名称
+            value (float): 相机的垂直视场角，单位为度
 
         Raises:
-            AssertionError: Invalid camera name
-            AssertionError: Invalid value
+            AssertionError: 相机名称无效
+            AssertionError: value 不合法
         """
         camid = self.get_camid(name)
         assert 0 < value < 180
@@ -698,16 +727,16 @@ class CameraModder(BaseModder):
 
     def get_quat(self, name):
         """
-        Grabs orientation of a specific camera
+        获取指定相机的朝向四元数。
 
         Args:
-            name (str): Name of the camera
+            name (str): 相机名称
 
         Returns:
-            np.array: (w,x,y,z) orientation of the camera, expressed in quaternions
+            np.array: 相机的 (w, x, y, z) 四元数朝向
 
         Raises:
-            AssertionError: Invalid camera name
+            AssertionError: 相机名称无效
         """
         camid = self.get_camid(name)
         assert camid > -1, "Unknown camera %s" % name
@@ -715,15 +744,15 @@ class CameraModder(BaseModder):
 
     def set_quat(self, name, value):
         """
-        Sets orientation of a specific camera
+        设置指定相机的朝向四元数。
 
         Args:
-            name (str): Name of the camera
-            value (np.array): (w,x,y,z) orientation of the camera, expressed in quaternions
+            name (str): 相机名称
+            value (np.array): 相机的 (w, x, y, z) 四元数朝向
 
         Raises:
-            AssertionError: Invalid camera name
-            AssertionError: Invalid value
+            AssertionError: 相机名称无效
+            AssertionError: value 维度无效
         """
         value = list(value)
         assert len(value) == 4, "Expectd value of length 4, instead got %s" % value
@@ -733,16 +762,16 @@ class CameraModder(BaseModder):
 
     def get_pos(self, name):
         """
-        Grabs position of a specific camera
+        获取指定相机的位置。
 
         Args:
-            name (str): Name of the camera
+            name (str): 相机名称
 
         Returns:
-            np.array: (x,y,z) position of the camera
+            np.array: 相机的 (x, y, z) 位置
 
         Raises:
-            AssertionError: Invalid camera name
+            AssertionError: 相机名称无效
         """
         camid = self.get_camid(name)
         assert camid > -1, "Unknown camera %s" % name
@@ -750,15 +779,15 @@ class CameraModder(BaseModder):
 
     def set_pos(self, name, value):
         """
-        Sets position of a specific camera
+        设置指定相机的位置。
 
         Args:
-            name (str): Name of the camera
-            value (np.array): (x,y,z) position of the camera
+            name (str): 相机名称
+            value (np.array): 相机的 (x, y, z) 位置
 
         Raises:
-            AssertionError: Invalid camera name
-            AssertionError: Invalid value
+            AssertionError: 相机名称无效
+            AssertionError: value 维度无效
         """
         value = list(value)
         assert len(value) == 3, "Expected value of length 3, instead got %s" % value
@@ -768,58 +797,56 @@ class CameraModder(BaseModder):
 
     def get_camid(self, name):
         """
-        Grabs unique id number of a specific camera
+        获取指定相机在模型中的唯一 id。
 
         Args:
-            name (str): Name of the camera
+            name (str): 相机名称
 
         Returns:
-            int: id of camera. -1 if not found
+            int: 相机 id。若未找到则返回 -1
         """
         return self.model.camera_name2id(name)
 
 
 class TextureModder(BaseModder):
     """
-    Modify textures in model. Example use:
+    用于修改 MuJoCo 模型中纹理（texture）的 Modder。
+
+    示例用法：
         sim = MjSim(...)
         modder = TextureModder(sim)
-        modder.whiten_materials()  # ensures materials won't impact colors
+        modder.whiten_materials()  # 先把材质颜色设为白色，避免纹理颜色被材质调制
         modder.set_checker('some_geom', (255, 0, 0), (0, 0, 0))
         modder.rand_all('another_geom')
 
-    Note: in order for the textures to take full effect, you'll need to set
-    the rgba values for all materials to [1, 1, 1, 1], otherwise the texture
-    colors will be modulated by the material colors. Call the
-    `whiten_materials` helper method to set all material colors to white.
+    注意：为了让纹理效果完全生效，需要将所有材质的 rgba 设为 [1, 1, 1, 1]，
+          否则纹理颜色会被材质颜色调制。可调用 `whiten_materials` 辅助方法
+          将所有材质颜色设为白色。
 
     Args:
-        sim (MjSim): MjSim object
+        sim (MjSim): MjSim 对象
 
-        random_state (RandomState): instance of np.random.RandomState
+        random_state (RandomState): np.random.RandomState 实例
 
-        geom_names ([string]): list of geom names to use for randomization. If not provided,
-            all geoms are used for randomization.
+        geom_names (str 列表): 要参与随机化的 geom 名称列表。若为 None，则所有 geom 都会被随机化。
 
-        randomize_local (bool): if True, constrain RGB color variations to be close to the
-            original RGB colors per geom and texture. Otherwise, RGB color values will
-            be sampled uniformly at random.
+        randomize_local (bool): 若为 True，颜色变化会被限制在原始 RGB 附近；
+            否则 RGB 颜色将在 [0, 1] 范围内完全随机采样。
 
-        randomize_material (bool): if True, randomizes material properties associated with a
-            given texture (reflectance, shininess, specular)
+        randomize_material (bool): 若为 True，同时随机化材质属性
+            （reflectance、shininess、specular）。
 
-        local_rgb_interpolation (float): determines the size of color variations from
-            the base geom colors when @randomize_local is True.
+        local_rgb_interpolation (float): 当 @randomize_local 为 True 时，
+            控制颜色相对于基础 geom 颜色的扰动幅度。
 
-        local_material_interpolation (float): determines the size of material variations from
-            the base material when @randomize_local and @randomize_material are both True.
+        local_material_interpolation (float): 当 @randomize_local 和 @randomize_material
+            都为 True 时，控制材质相对于基础材质的扰动幅度。
 
-        texture_variations (list of str): a list of texture variation strings. Each string
-            must be either 'rgb', 'checker', 'noise', or 'gradient' and corresponds to
-            a specific kind of texture randomization. For each geom that has a material
-            and texture, a random variation from this list is sampled and applied.
+        texture_variations (str 列表): 纹理变化方式列表。每个字符串必须是
+            'rgb'、'checker'、'noise'、'gradient' 之一，对应一种纹理随机化方式。
+            对于每个拥有材质和纹理的 geom，会从该列表中随机选择一种方式应用。
 
-        randomize_skybox (bool): if True, apply texture variations to the skybox as well.
+        randomize_skybox (bool): 若为 True，同样对天空盒（skybox）应用纹理随机化。
     """
 
     def __init__(
@@ -847,12 +874,14 @@ class TextureModder(BaseModder):
         self.texture_variations = list(texture_variations)
         self.randomize_skybox = randomize_skybox
 
+        # 注册所有支持的纹理变化回调函数
         self._all_texture_variation_callbacks = {
             "rgb": self.rand_rgb,
             "checker": self.rand_checker,
             "noise": self.rand_noise,
             "gradient": self.rand_gradient,
         }
+        # 只保留用户指定的纹理变化方式
         self._texture_variation_callbacks = {
             k: self._all_texture_variation_callbacks[k] for k in self.texture_variations
         }
@@ -861,30 +890,31 @@ class TextureModder(BaseModder):
 
     def save_defaults(self):
         """
-        Uses the current MjSim state and model to save default parameter values.
+        保存当前模型中所有纹理、材质和 geom 颜色的默认值。
         """
+        # 为每个纹理创建 Texture 辅助对象
         self.textures = [Texture(self.model, i) for i in range(self.model.ntex)]
         # self._build_tex_geom_map()
 
-        # save copy of original texture bitmaps
+        # 保存原始纹理位图的副本，作为后续随机化的基准
         self._default_texture_bitmaps = [np.array(text.bitmap) for text in self.textures]
 
-        # These matrices will be used to rapidly synthesize
-        # checker pattern bitmaps
+        # 缓存棋盘格矩阵，用于快速生成 checker 纹理
         self._cache_checker_matrices()
 
+        # 保存每个 geom 的默认纹理或颜色
         self._defaults = {k: {} for k in self.geom_names}
         if self.randomize_skybox:
             self._defaults["skybox"] = {}
         for name in self.geom_names:
             if self._check_geom_for_texture(name):
-                # store the texture bitmap for this geom
+                # 若 geom 有纹理，保存其纹理位图
                 tex_id = self._name_to_tex_id(name)
                 self._defaults[name]["texture"] = self._default_texture_bitmaps[tex_id]
-                # store material properties as well (in tuple (reflectance, shininess, specular) form)
+                # 同时保存材质属性（reflectance, shininess, specular）
                 self._defaults[name]["material"] = self.get_material(name)
             else:
-                # store geom color
+                # 若 geom 没有纹理，保存其 RGB 颜色
                 self._defaults[name]["rgb"] = np.array(self.get_geom_rgb(name))
 
         if self.randomize_skybox:
@@ -893,7 +923,7 @@ class TextureModder(BaseModder):
 
     def restore_defaults(self):
         """
-        Reloads the saved parameter values.
+        恢复所有纹理、材质和 geom 颜色到保存的默认值。
         """
         for name in self.geom_names:
             if self._check_geom_for_texture(name):
@@ -907,19 +937,22 @@ class TextureModder(BaseModder):
 
     def randomize(self):
         """
-        Overrides mujoco-py implementation to also randomize color
-        for geoms that have no material.
+        对所有 geom 的纹理/颜色以及天空盒进行随机化。
+
+        本实现扩展了 mujoco-py 原版：即使 geom 没有材质（material），
+        也会直接对其 geom_rgba 颜色进行随机化。
         """
+        # 先把所有材质和 geom 颜色"漂白"为白色，确保纹理颜色不被材质调制
         self.whiten_materials()
         for name in self.geom_names:
             if self._check_geom_for_texture(name):
-                # geom has valid texture that can be randomized
+                # 若 geom 有合法纹理，则随机化纹理
                 self._randomize_texture(name)
-                # randomize material if requested
+                # 若需要，同时随机化材质属性
                 if self.randomize_material:
                     self._randomize_material(name)
             else:
-                # randomize geom color
+                # 否则直接随机化 geom 颜色
                 self._randomize_geom_color(name)
 
         if self.randomize_skybox:
@@ -927,26 +960,28 @@ class TextureModder(BaseModder):
 
     def _randomize_geom_color(self, name):
         """
-        Helper function to randomize color of a specific geom
+        对指定 geom 的颜色进行随机化。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
         if self.randomize_local:
+            # 局部随机化：在原始颜色与随机颜色之间线性插值
             random_color = self.random_state.uniform(0, 1, size=3)
             rgb = (1.0 - self.local_rgb_interpolation) * self._defaults[name][
                 "rgb"
             ] + self.local_rgb_interpolation * random_color
         else:
+            # 全局随机化：直接采样新的 RGB 颜色
             rgb = self.random_state.uniform(0, 1, size=3)
         self.set_geom_rgb(name, rgb)
 
     def _randomize_texture(self, name):
         """
-        Helper function to randomize texture of a specific geom
+        对指定 geom 的纹理进行随机化（随机选择一种纹理变化方式）。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
         keys = list(self._texture_variation_callbacks.keys())
         choice = keys[self.random_state.randint(len(keys))]
@@ -954,36 +989,36 @@ class TextureModder(BaseModder):
 
     def _randomize_material(self, name):
         """
-        Helper function to randomize material of a specific geom
+        对指定 geom 的材质属性进行随机化。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
-        # Return immediately if this is the skybox
+        # 天空盒没有材质，直接返回
         if name == "skybox":
             return
-        # Grab material id
+        # 获取材质 id
         mat_id = self._name_to_mat_id(name)
-        # Randomize reflectance, shininess, and specular
+        # 随机采样 reflectance、shininess、specular
         material = self.random_state.uniform(0, 1, size=3)  # (reflectance, shininess, specular)
         self.set_material(name, material, perturb=self.randomize_local)
 
     def rand_checker(self, name):
         """
-        Generates a random checker pattern for a specific geom
+        为指定 geom 生成随机棋盘格（checker）纹理。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
         rgb1, rgb2 = self.get_rand_rgb(2)
         self.set_checker(name, rgb1, rgb2, perturb=self.randomize_local)
 
     def rand_gradient(self, name):
         """
-        Generates a random gradient pattern for a specific geom
+        为指定 geom 生成随机渐变（gradient）纹理。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
         rgb1, rgb2 = self.get_rand_rgb(2)
         vertical = bool(self.random_state.uniform() > 0.5)
@@ -991,78 +1026,80 @@ class TextureModder(BaseModder):
 
     def rand_rgb(self, name):
         """
-        Generates a random RGB color for a specific geom
+        为指定 geom 生成随机纯色 RGB 纹理。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
         rgb = self.get_rand_rgb()
         self.set_rgb(name, rgb, perturb=self.randomize_local)
 
     def rand_noise(self, name):
         """
-        Generates a random RGB noise pattern for a specific geom
+        为指定 geom 生成随机噪声（noise）纹理。
 
         Args:
-            name (str): Name of the geom to randomize for
+            name (str): 要随机化的 geom 名称
         """
+        # 前景噪声像素占比：在 0.1 ~ 0.9 之间随机
         fraction = 0.1 + self.random_state.uniform() * 0.8
         rgb1, rgb2 = self.get_rand_rgb(2)
         self.set_noise(name, rgb1, rgb2, fraction, perturb=self.randomize_local)
 
     def whiten_materials(self):
         """
-        Extends modder.TextureModder to also whiten geom_rgba
+        辅助方法：将所有 geom 和材质的颜色设为白色。
 
-        Helper method for setting all material colors to white, otherwise
-        the texture modifications won't take full effect.
+        如果不把材质颜色漂白，纹理颜色会被材质颜色调制，导致随机化效果不理想。
+        本方法扩展了 mujoco-py 原版，同时漂白了 geom_rgba。
         """
         for name in self.geom_names:
-            # whiten geom
+            # 将 geom 本身的颜色设为白色
             geom_id = self.model.geom_name2id(name)
             self.model.geom_rgba[geom_id, :] = 1.0
 
             if self._check_geom_for_texture(name):
-                # whiten material
+                # 若 geom 有材质，将材质颜色也设为白色
                 mat_id = self.model.geom_matid[geom_id]
                 self.model.mat_rgba[mat_id, :] = 1.0
 
     def get_geom_rgb(self, name):
         """
-        Grabs rgb color of a specific geom
+        获取指定 geom 的 RGB 颜色。
 
         Args:
-            name (str): Name of the geom
+            name (str): geom 名称
 
         Returns:
-            np.array: (r,g,b) geom colors
+            np.array: geom 的 (r, g, b) 颜色
         """
         geom_id = self.model.geom_name2id(name)
         return self.model.geom_rgba[geom_id, :3]
 
     def set_geom_rgb(self, name, rgb):
         """
-        Sets rgb color of a specific geom
+        设置指定 geom 的 RGB 颜色。
 
         Args:
-            name (str): Name of the geom
-            rgb (np.array): (r,g,b) geom colors
+            name (str): geom 名称
+            rgb (np.array): geom 的 (r, g, b) 颜色
         """
         geom_id = self.model.geom_name2id(name)
         self.model.geom_rgba[geom_id, :3] = rgb
 
     def get_rand_rgb(self, n=1):
         """
-        Grabs a batch of random rgb tuple combos
+        随机生成一组或多组 RGB 颜色元组。
 
         Args:
-            n (int): How many sets of rgb tuples to randomly generate
+            n (int): 要生成的 RGB 元组数量
 
         Returns:
-            np.array or n-tuple: if n > 1, each tuple entry is a rgb tuple. else, single (r,g,b) array
+            np.array 或 n 元组: 若 n > 1，返回 n 个 RGB 元组；否则返回单个 (r, g, b) 数组
         """
 
         def _rand_rgb():
+            # 在 [0, 255] 范围内采样 uint8 类型的 RGB 值
             return np.array(self.random_state.uniform(size=3) * 255, dtype=np.uint8)
 
         if n == 1:
@@ -1072,13 +1109,13 @@ class TextureModder(BaseModder):
 
     def get_texture(self, name):
         """
-        Grabs texture of a specific geom
+        获取与指定 geom 关联的 Texture 对象。
 
         Args:
-            name (str): Name of the geom
+            name (str): geom 名称
 
         Returns:
-            Texture: texture associated with the geom
+            Texture: 与 geom 关联的纹理对象
         """
         tex_id = self._name_to_tex_id(name)
         texture = self.textures[tex_id]
@@ -1086,38 +1123,38 @@ class TextureModder(BaseModder):
 
     def set_texture(self, name, bitmap, perturb=False):
         """
-        Sets the bitmap for the texture that corresponds
-        to geom @name.
+        设置与 geom @name 对应的纹理位图。
 
-        If @perturb is True, then use the computed bitmap
-        to perturb the default bitmap slightly, instead
-        of replacing it.
+        若 @perturb 为 True，则使用计算出的位图对默认位图进行轻微扰动，
+        而不是完全替换它。
 
         Args:
-            name (str): Name of the geom
-            bitmap (np.array): 3d-array representing rgb pixel-wise values
-            perturb (bool): Whether to perturb the inputted bitmap or not
+            name (str): geom 名称
+            bitmap (np.array): 表示每个像素 RGB 值的三维数组
+            perturb (bool): 是否对输入位图进行扰动
         """
         bitmap_to_set = self.get_texture(name).bitmap
         if perturb:
+            # 局部扰动：在默认纹理与目标纹理之间插值
             bitmap = (1.0 - self.local_rgb_interpolation) * self._defaults[name][
                 "texture"
             ] + self.local_rgb_interpolation * bitmap
         bitmap_to_set[:] = bitmap
+        # 修改位图后需要上传到 GPU，渲染时才能看到变化
         self.upload_texture(name)
 
     def get_material(self, name):
         """
-        Grabs material of a specific geom
+        获取与指定 geom 关联的材质属性。
 
         Args:
-            name (str): Name of the geom
+            name (str): geom 名称
 
         Returns:
-            np.array: (reflectance, shininess, specular) material properties associated with the geom
+            np.array: geom 的材质属性 (reflectance, shininess, specular)
         """
         mat_id = self._name_to_mat_id(name)
-        # Material is in tuple form (reflectance, shininess, specular)
+        # 材质以 (reflectance, shininess, specular) 元组形式返回
         material = np.array(
             (self.model.mat_reflectance[mat_id], self.model.mat_shininess[mat_id], self.model.mat_specular[mat_id])
         )
@@ -1125,19 +1162,19 @@ class TextureModder(BaseModder):
 
     def set_material(self, name, material, perturb=False):
         """
-        Sets the material that corresponds to geom @name.
+        设置与 geom @name 对应的材质属性。
 
-        If @perturb is True, then use the computed material
-        to perturb the default material slightly, instead
-        of replacing it.
+        若 @perturb 为 True，则使用计算出的材质对默认材质进行轻微扰动，
+        而不是完全替换它。
 
         Args:
-            name (str): Name of the geom
-            material (np.array): (reflectance, shininess, specular) material properties associated with the geom
-            perturb (bool): Whether to perturb the inputted material properties or not
+            name (str): geom 名称
+            material (np.array): geom 的材质属性 (reflectance, shininess, specular)
+            perturb (bool): 是否对输入材质属性进行扰动
         """
         mat_id = self._name_to_mat_id(name)
         if perturb:
+            # 局部扰动：在默认材质与新材质之间插值
             material = (1.0 - self.local_material_interpolation) * self._defaults[name][
                 "material"
             ] + self.local_material_interpolation * material
@@ -1147,28 +1184,26 @@ class TextureModder(BaseModder):
 
     def get_checker_matrices(self, name):
         """
-        Grabs checker pattern matrix associated with @name.
+        获取与 @name 关联的棋盘格模式矩阵。
 
         Args:
-            name (str): Name of geom
+            name (str): geom 名称
 
         Returns:
-            np.array: 3d-array representing rgb checker pattern
+            np.array: 表示 RGB 棋盘格模式的三维数组
         """
         tex_id = self._name_to_tex_id(name)
         return self._texture_checker_mats[tex_id]
 
     def set_checker(self, name, rgb1, rgb2, perturb=False):
         """
-        Use the two checker matrices to create a checker
-        pattern from the two colors, and set it as
-        the texture for geom @name.
+        使用两个棋盘格矩阵和两种颜色，为 geom @name 创建棋盘格纹理。
 
         Args:
-            name (str): Name of geom
-            rgb1 (3-array): (r,g,b) value for one half of checker pattern
-            rgb2 (3-array): (r,g,b) value for other half of checker pattern
-            perturb (bool): Whether to perturb the resulting checker pattern or not
+            name (str): geom 名称
+            rgb1 (3 数组): 棋盘格中一半格子的 (r, g, b) 颜色
+            rgb2 (3 数组): 棋盘格中另一半格子的 (r, g, b) 颜色
+            perturb (bool): 是否对最终棋盘格纹理进行扰动
         """
         cbd1, cbd2 = self.get_checker_matrices(name)
         rgb1 = np.asarray(rgb1).reshape([1, 1, -1])
@@ -1179,19 +1214,17 @@ class TextureModder(BaseModder):
 
     def set_gradient(self, name, rgb1, rgb2, vertical=True, perturb=False):
         """
-        Creates a linear gradient from rgb1 to rgb2.
+        从 rgb1 到 rgb2 创建线性渐变纹理。
 
         Args:
-            name (str): Name of geom
-            rgb1 (3-array): start color
-            rgb2 (3- array): end color
-            vertical (bool): if True, the gradient in the positive
-                y-direction, if False it's in the positive x-direction.
-            perturb (bool): Whether to perturb the resulting gradient pattern or not
+            name (str): geom 名称
+            rgb1 (3 数组): 渐变起始颜色
+            rgb2 (3 数组): 渐变结束颜色
+            vertical (bool): 若为 True，渐变沿正 y 方向；否则沿正 x 方向。
+            perturb (bool): 是否对最终渐变纹理进行扰动
         """
-        # NOTE: MuJoCo's gradient uses a sigmoid. Here we simplify
-        # and just use a linear gradient... We could change this
-        # to just use a tanh-sigmoid if needed.
+        # 注意：MuJoCo 原生渐变使用 sigmoid，这里简化为线性渐变。
+        # 如需更接近原生效果，可改用 tanh-sigmoid。
         bitmap = self.get_texture(name).bitmap
         h, w = bitmap.shape[:2]
         if vertical:
@@ -1207,13 +1240,12 @@ class TextureModder(BaseModder):
 
     def set_rgb(self, name, rgb, perturb=False):
         """
-        Just set the texture bitmap for geom @name
-        to a constant rgb value.
+        将 geom @name 的纹理位图设置为纯色 RGB。
 
         Args:
-            name (str): Name of geom
-            rgb (3-array): desired (r,g,b) color
-            perturb (bool): Whether to perturb the resulting color pattern or not
+            name (str): geom 名称
+            rgb (3 数组): 目标 (r, g, b) 颜色
+            perturb (bool): 是否对最终颜色进行扰动
         """
         bitmap = self.get_texture(name).bitmap
         new_bitmap = np.zeros_like(bitmap)
@@ -1223,17 +1255,18 @@ class TextureModder(BaseModder):
 
     def set_noise(self, name, rgb1, rgb2, fraction=0.9, perturb=False):
         """
-        Sets the texture bitmap for geom @name to a noise pattern
+        将 geom @name 的纹理位图设置为噪声模式。
 
         Args:
-            name (str): name of geom
-            rgb1 (3-array): background color
-            rgb2 (3-array): color of random noise foreground color
-            fraction (float): fraction of pixels with foreground color
-            perturb (bool): Whether to perturb the resulting color pattern or not
+            name (str): geom 名称
+            rgb1 (3 数组): 背景颜色
+            rgb2 (3 数组): 前景噪声颜色
+            fraction (float): 前景噪声像素所占比例
+            perturb (bool): 是否对最终噪声纹理进行扰动
         """
         bitmap = self.get_texture(name).bitmap
         h, w = bitmap.shape[:2]
+        # 根据 fraction 生成随机 mask，决定哪些像素使用前景色
         mask = self.random_state.uniform(size=(h, w)) < fraction
 
         new_bitmap = np.zeros_like(bitmap)
@@ -1244,27 +1277,26 @@ class TextureModder(BaseModder):
 
     def upload_texture(self, name, device_id=0):
         """
-        Uploads the texture to the GPU so it's available in the rendering.
+        将修改后的纹理上传到 GPU，使其在渲染中可见。
 
         Args:
-            name (str): name of geom
+            name (str): geom 名称
         """
         texture = self.get_texture(name)
+        # 若离屏渲染上下文尚未创建，则临时创建一个用于上传纹理
         if self.sim._render_context_offscreen is None:
             render_context = MjRenderContextOffscreen(self.sim, device_id)
             render_context.upload_texture(texture.id)
 
     def _check_geom_for_texture(self, name):
         """
-        Helper function to determined if the geom @name has
-        an assigned material and that the material has
-        an assigned texture.
+        判断指定 geom 是否同时关联了材质（material）和纹理（texture）。
 
         Args:
-            name (str): name of geom
+            name (str): geom 名称
 
         Returns:
-            bool: True if specific geom has both material and texture associated, else False
+            bool: 若 geom 同时关联了材质和纹理则返回 True，否则返回 False
         """
         geom_id = self.model.geom_name2id(name)
         mat_id = self.model.geom_matid[geom_id]
@@ -1277,19 +1309,19 @@ class TextureModder(BaseModder):
 
     def _name_to_tex_id(self, name):
         """
-        Helper function to get texture id from geom name.
+        根据 geom 名称获取对应的纹理 id。
 
         Args:
-            name (str): name of geom
+            name (str): geom 名称
 
         Returns:
-            int: id of texture associated with geom
+            int: 与 geom 关联的纹理 id
 
         Raises:
-            AssertionError: [No texture associated with geom]
+            AssertionError: [geom 没有关联纹理]
         """
 
-        # handle skybox separately
+        # 天空盒需要单独处理：遍历所有纹理，找到类型为 skybox（type=2）的纹理
         if name == "skybox":
             skybox_tex_id = -1
             for tex_id in range(self.model.ntex):
@@ -1320,7 +1352,7 @@ class TextureModder(BaseModder):
             AssertionError: [No material associated with geom]
         """
 
-        # handle skybox separately
+        # 天空盒没有材质，单独处理
         if name == "skybox":
             raise ValueError("Error: skybox has no material!")
 
@@ -1331,13 +1363,15 @@ class TextureModder(BaseModder):
 
     def _cache_checker_matrices(self):
         """
-        Cache two matrices of the form [[1, 0, 1, ...],
-                                        [0, 1, 0, ...],
-                                        ...]
-        and                            [[0, 1, 0, ...],
-                                        [1, 0, 1, ...],
-                                        ...]
-        for each texture. To use for fast creation of checkerboard patterns
+        为每个纹理缓存两个棋盘格矩阵：
+            [[1, 0, 1, ...],
+             [0, 1, 0, ...],
+             ...]
+        和
+            [[0, 1, 0, ...],
+             [1, 0, 1, ...],
+             ...]
+        用于快速生成棋盘格纹理图案。
         """
         self._texture_checker_mats = []
         for tex_id in range(self.model.ntex):
@@ -1347,17 +1381,16 @@ class TextureModder(BaseModder):
 
     def _make_checker_matrices(self, h, w):
         """
-        Helper function to quickly generate binary matrices used to create checker patterns
+        快速生成用于创建棋盘格图案的二维二进制矩阵。
 
         Args:
-            h (int): Desired height of matrices
-            w (int): Desired width of matrices
+            h (int): 矩阵期望高度
+            w (int): 矩阵期望宽度
 
         Returns:
-            2-tuple:
-
-                - (np.array): 2d-array representing first half of checker matrix
-                - (np.array): 2d-array representing second half of checker matrix
+            2 元组:
+                - (np.array): 表示棋盘格第一部分的二维数组
+                - (np.array): 表示棋盘格第二部分的二维数组
         """
         re = np.r_[((w + 1) // 2) * [0, 1]]
         ro = np.r_[((w + 1) // 2) * [1, 0]]
@@ -1366,17 +1399,17 @@ class TextureModder(BaseModder):
         return cbd1, cbd2
 
 
-# From mjtTexture
+# MuJoCo 纹理类型枚举（来自 mjtTexture）
 MJT_TEXTURE_ENUM = ["2d", "cube", "skybox"]
 
 
 class Texture:
     """
-    Helper class for operating on the MuJoCo textures.
+    用于操作 MuJoCo 纹理的辅助类。
 
     Args:
-        model (MjModel): Mujoco sim model
-        tex_id (int): id of specific texture in mujoco sim
+        model (MjModel): MuJoCo 模型
+        tex_id (int): 纹理在模型中的 id
     """
 
     __slots__ = ["id", "type", "height", "width", "tex_adr", "tex_rgb"]
@@ -1387,15 +1420,16 @@ class Texture:
         self.height = model.tex_height[tex_id]
         self.width = model.tex_width[tex_id]
         self.tex_adr = model.tex_adr[tex_id]
+        # tex_rgb 是模型中所有纹理 RGB 数据共享的一维数组
         self.tex_rgb = model.tex_rgb
 
     @property
     def bitmap(self):
         """
-        Grabs color bitmap associated with this texture from the mujoco sim.
+        从 MuJoCo 仿真中获取与该纹理关联的颜色位图。
 
         Returns:
-            np.array: 3d-array representing the rgb texture bitmap
+            np.array: 表示 RGB 纹理位图的三维数组 (height, width, 3)
         """
         size = self.height * self.width * 3
         data = self.tex_rgb[self.tex_adr : self.tex_adr + size]
@@ -1404,12 +1438,12 @@ class Texture:
 
 class DynamicsModder(BaseModder):
     """
-    Modder for various dynamics properties of the mujoco model, such as friction, damping, etc.
-    This can be used to modify parameters stored in MjModel (ie friction, damping, etc.) as
-    well as optimizer parameters stored in PyMjOption (i.e.: medium density, viscosity, etc.)
-    To modify a parameter, use the parameter to be changed as a keyword argument to
-    self.mod and the new value as the value for that argument. Supports arbitrary many
-    modifications in a single step. Example use:
+    用于修改 MuJoCo 模型各种动力学属性的 Modder，例如摩擦、阻尼、质量、惯量等。
+
+    可以同时修改存储在 MjModel 中的参数（如摩擦、阻尼）和存储在 PyMjOption 中的
+    优化器参数（如介质密度 density、粘度 viscosity）。
+
+    使用方法：
         sim = MjSim(...)
         modder = DynamicsModder(sim)
         modder.mod("element1_name", "attr1", new_value1)
@@ -1417,80 +1451,75 @@ class DynamicsModder(BaseModder):
         ...
         modder.update()
 
-    NOTE: It is necessary to perform modder.update() after performing all modifications to make sure
-        the changes are propagated
+    注意：所有修改完成后必须调用 modder.update()，以确保修改被传播到仿真中。
 
-    NOTE: A full list of supported randomizable parameters can be seen by calling modder.dynamics_parameters
+    注意：可通过 modder.dynamics_parameters 查看支持随机化的完整参数列表。
 
-    NOTE: When modifying parameters belonging to MjModel.opt (e.g.: density, viscosity), no name should
-        be specified (set it as None in mod(...)). This is because opt does not have a name attribute
-        associated with it
+    注意：修改 MjModel.opt 中的参数（如 density、viscosity）时，不需要指定 name，
+          应在 mod(...) 中将 name 设为 None，因为 opt 没有 name 属性。
 
     Args:
-        sim (MjSim): Mujoco sim instance
+        sim (MjSim): Mujoco 仿真实例
 
-        random_state (RandomState): instance of np.random.RandomState
+        random_state (RandomState): np.random.RandomState 实例
 
-        randomize_density (bool): If True, randomizes global medium density
+        randomize_density (bool): 若为 True，随机化全局介质密度
 
-        randomize_viscosity (bool): If True, randomizes global medium viscosity
+        randomize_viscosity (bool): 若为 True，随机化全局介质粘度
 
-        density_perturbation_ratio (float): Relative (fraction) magnitude of default density randomization
+        density_perturbation_ratio (float): 密度随机化的相对（比例）幅度
 
-        viscosity_perturbation_ratio:  Relative (fraction) magnitude of default viscosity randomization
+        viscosity_perturbation_ratio: 粘度随机化的相对（比例）幅度
 
-        body_names (None or list of str): list of bodies to use for randomization. If not provided, all
-            bodies in the model are randomized.
+        body_names (None 或 str 列表): 要参与随机化的 body 名称列表。若为 None，则所有 body 都会被随机化。
 
-        randomize_position (bool): If True, randomizes body positions
+        randomize_position (bool): 若为 True，随机化 body 位置
 
-        randomize_quaternion (bool): If True, randomizes body quaternions
+        randomize_quaternion (bool): 若为 True，随机化 body 朝向四元数
 
-        randomize_inertia (bool): If True, randomizes body inertias (only applicable for non-zero mass bodies)
+        randomize_inertia (bool): 若为 True，随机化 body 惯量（仅对质量非零的 body 有效）
 
-        randomize_mass (bool): If True, randomizes body masses (only applicable for non-zero mass bodies)
+        randomize_mass (bool): 若为 True，随机化 body 质量（仅对质量非零的 body 有效）
 
-        position_perturbation_size (float): Magnitude of body position randomization
+        position_perturbation_size (float): body 位置随机化的扰动幅度
 
-        quaternion_perturbation_size (float): Magnitude of body quaternion randomization (angle in radians)
+        quaternion_perturbation_size (float): body 朝向随机化的扰动幅度（弧度）
 
-        inertia_perturbation_ratio (float): Relative (fraction) magnitude of body inertia randomization
+        inertia_perturbation_ratio (float): body 惯量随机化的相对（比例）幅度
 
-        mass_perturbation_ratio (float): Relative (fraction) magnitude of body mass randomization
+        mass_perturbation_ratio (float): body 质量随机化的相对（比例）幅度
 
-        geom_names (None or list of str): list of geoms to use for randomization. If not provided, all
-            geoms in the model are randomized.
+        geom_names (None 或 str 列表): 要参与随机化的 geom 名称列表。若为 None，则所有 geom 都会被随机化。
 
-        randomize_friction (bool): If True, randomizes geom frictions
+        randomize_friction (bool): 若为 True，随机化 geom 摩擦
 
-        randomize_solref (bool): If True, randomizes geom solrefs
+        randomize_solref (bool): 若为 True，随机化 geom 的 solref 接触求解器参数
 
-        randomize_solimp (bool): If True, randomizes geom solimps
+        randomize_solimp (bool): 若为 True，随机化 geom 的 solimp 接触求解器阻抗参数
 
-        friction_perturbation_ratio (float): Relative (fraction) magnitude of geom friction randomization
+        friction_perturbation_ratio (float): geom 摩擦随机化的相对（比例）幅度
 
-        solref_perturbation_ratio (float): Relative (fraction) magnitude of geom solref randomization
+        solref_perturbation_ratio (float): geom solref 随机化的相对（比例）幅度
 
-        solimp_perturbation_ratio (float): Relative (fraction) magnitude of geom solimp randomization
+        solimp_perturbation_ratio (float): geom solimp 随机化的相对（比例）幅度
 
-        joint_names (None or list of str): list of joints to use for randomization. If not provided, all
-            joints in the model are randomized.
+        joint_names (None 或 str 列表): 要参与随机化的 joint 名称列表。若为 None，则所有 joint 都会被随机化。
 
-        randomize_stiffness (bool): If True, randomizes joint stiffnesses
+        randomize_stiffness (bool): 若为 True，随机化关节刚度
 
-        randomize_frictionloss (bool): If True, randomizes joint frictionlosses
+        randomize_frictionloss (bool): 若为 True，随机化关节摩擦损耗
 
-        randomize_damping (bool): If True, randomizes joint dampings
+        randomize_damping (bool): 若为 True，随机化关节阻尼
 
-        randomize_armature (bool): If True, randomizes joint armatures
+        randomize_armature (bool): 若为 True，随机化关节电枢（armature）
 
-        stiffness_perturbation_ratio (float): Relative (fraction) magnitude of joint stiffness randomization
+        stiffness_perturbation_ratio (float): 关节刚度随机化的相对（比例）幅度
 
-        frictionloss_perturbation_size (float): Magnitude of joint frictionloss randomization
+        frictionloss_perturbation_size (float): 关节摩擦损耗随机化的绝对扰动幅度
 
-        damping_perturbation_size (float): Magnitude of joint damping randomization
+        damping_perturbation_size (float): 关节阻尼随机化的绝对扰动幅度
 
-        armature_perturbation_size (float): Magnitude of joint armature randomization
+        armature_perturbation_size (float): 关节电枢随机化的绝对扰动幅度
     """
 
     def __init__(
@@ -1533,24 +1562,25 @@ class DynamicsModder(BaseModder):
     ):
         super().__init__(sim=sim, random_state=random_state)
 
-        # Setup relevant values
+        # 初始化相关变量
         self.dummy_bodies = set()
-        # Find all bodies that don't have any mass associated with them
+        # 找出所有没有质量的"虚拟" body（如 world body），这些 body 不应被随机化
         for body_name in self.sim.model.body_names:
             body_id = self.sim.model.body_name2id(body_name)
             if self.sim.model.body_mass[body_id] == 0:
                 self.dummy_bodies.add(body_name)
 
-        # Get all values to randomize
+        # 获取需要随机化的元素名称列表
         self.body_names = list(self.sim.model.body_names) if body_names is None else body_names
         self.geom_names = list(self.sim.model.geom_names) if geom_names is None else geom_names
         self.joint_names = list(self.sim.model.joint_names) if joint_names is None else joint_names
 
-        # Setup randomization settings
-        # Each dynamics randomization group has its set of randomizable parameters, each of which has
-        # its own settings ["randomize": whether its actively being randomized, "perturbation": the (potentially)
-        # relative magnitude of the randomization to use, "type": either "ratio" or "size" (relative or absolute
-        # perturbations), and "clip": (low, high) values to clip the final perturbed value by]
+        # 配置随机化设置
+        # 每个动力学随机化组包含若干参数，每个参数有以下设置：
+        #   - "randomize": 是否启用该参数的随机化
+        #   - "perturbation": 扰动幅度（可能是相对比例或绝对值）
+        #   - "type": "ratio"（相对扰动）或 "size"（绝对扰动）
+        #   - "clip": 扰动后数值的裁剪范围 (low, high)
         self.opt_randomizations = {
             "density": {
                 "randomize": randomize_density,
@@ -1681,6 +1711,7 @@ class DynamicsModder(BaseModder):
         self.joint_defaults = {}
         for joint_name in self.sim.model.joint_names:
             joint_id = self.sim.model.joint_name2id(joint_name)
+            # 找到与该关节关联的所有自由度（dof）索引
             dof_idx = [i for i, v in enumerate(self.sim.model.dof_jntid) if v == joint_id]
             self.joint_defaults[joint_name] = {
                 "stiffness": self.sim.model.jnt_stiffness[joint_id],
@@ -1691,238 +1722,234 @@ class DynamicsModder(BaseModder):
 
     def restore_defaults(self):
         """
-        Restores the default values curently saved in this modder
+        恢复当前 Modder 中保存的所有默认值。
         """
-        # Loop through all defaults and set the default value in sim
+        # 遍历所有默认值分组，逐个调用 mod() 恢复到仿真中
         for group_defaults in (self.opt_defaults, self.body_defaults, self.geom_defaults, self.joint_defaults):
             for name, defaults in group_defaults.items():
                 for attr, default_val in defaults.items():
                     self.mod(name=name, attr=attr, val=default_val)
 
-        # Make sure changes propagate in sim
+        # 确保修改传播到仿真中
         self.update()
 
     def randomize(self):
         """
-        Randomizes all enabled dynamics parameters in the simulation
+        对仿真中所有启用的动力学参数进行随机化。
         """
+        # 依次处理 opt、body、geom、joint 四组参数
         for group_defaults, group_randomizations, group_randomize_names in zip(
             (self.opt_defaults, self.body_defaults, self.geom_defaults, self.joint_defaults),
             (self.opt_randomizations, self.body_randomizations, self.geom_randomizations, self.joint_randomizations),
             ([None], self.body_names, self.geom_names, self.joint_names),
         ):
             for name in group_randomize_names:
-                # Randomize all parameters associated with this element
+                # 随机化与该元素关联的所有参数
                 for attr, default_val in group_defaults[name].items():
                     val = copy.copy(default_val)
                     settings = group_randomizations[attr]
                     if settings["randomize"]:
-                        # Randomize accordingly, and clip the final perturbed value
+                        # 根据参数类型生成随机扰动，并裁剪到合法范围
                         perturbation = np.random.rand() if type(val) in {int, float} else np.random.rand(*val.shape)
                         perturbation = settings["perturbation"] * (-1 + 2 * perturbation)
                         val = val + perturbation if settings["type"] == "size" else val * (1.0 + perturbation)
                         val = np.clip(val, *settings["clip"])
-                    # Modify this value
+                    # 应用修改
                     self.mod(name=name, attr=attr, val=val)
 
-        # Make sure changes propagate in sim
+        # 确保修改传播到仿真中
         self.update()
 
     def update_sim(self, sim):
         """
-        In addition to super method, update internal default values to match the current values from
-        (the presumably new) @sim.
+        除了调用父类方法更新 sim 引用外，还根据新的 sim 重新保存默认值。
 
         Args:
-            sim (MjSim): MjSim object
+            sim (MjSim): 新的 MjSim 对象
         """
         super().update_sim(sim=sim)
         self.save_defaults()
 
     def update(self):
         """
-        Propagates the changes made up to this point through the simulation
+        将到目前为止所做的修改传播到仿真中。
         """
+        # 调用 MuJoCo forward 以重新计算依赖修改参数的内部状态
         self.sim.forward()
 
     def mod(self, name, attr, val):
         """
-        General method to modify dynamics parameter @attr to be new value @val, associated with element @name.
+        通用方法：将元素 @name 的动力学参数 @attr 修改为新值 @val。
 
         Args:
-            name (str): Name of element to modify parameter. This can be a body, geom, or joint name. If modifying
-                an opt parameter, this should be set to None
-            attr (str): Name of the dynamics parameter to modify. Valid options are self.dynamics_parameters
-            val (int or float or n-array): New value(s) to set for the given dynamics parameter. The type of this
-                argument should match the expected type for the given parameter.
+            name (str): 要修改参数的元素名称。可以是 body、geom 或 joint 名称。
+                若修改 opt 参数，应设为 None。
+            attr (str): 要修改的动力学参数名称。有效选项见 self.dynamics_parameters。
+            val (int 或 float 或 n 维数组): 要设置的新值。类型应与参数期望类型一致。
         """
-        # Make sure specified parameter is valid, and then modify it
+        # 确保参数有效，然后调用对应的 mod_<attr> 方法
         assert (
             attr in self.dynamics_parameters
         ), "Invalid dynamics parameter specified! Supported parameters are: {};" " requested: {}".format(
             self.dynamics_parameters, attr
         )
-        # Modify the requested parameter (uses a clean way to programmatically call the appropriate method)
+        # 使用 getattr 动态调用对应的修改方法，避免大量 if-else
         getattr(self, f"mod_{attr}")(name, val)
 
     def mod_density(self, name=None, val=0.0):
         """
-        Modifies the global medium density of the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#option for more details.
+        修改仿真的全局介质密度。
+        详见 http://www.mujoco.org/book/XMLreference.html#option。
 
         Args:
-            name (str): Name for this element. Should be left as None (opt has no name attribute)
-            val (float): New density value.
+            name (str): 应设为 None（opt 没有 name 属性）。
+            val (float): 新的密度值。
         """
-        # Make sure inputs are of correct form
+        # 确保输入形式正确
         assert name is None, "No name should be specified if modding density!"
 
-        # Modify this value
+        # 修改密度值
         self.sim.model.opt.density = val
 
     def mod_viscosity(self, name=None, val=0.0):
         """
-        Modifies the global medium viscosity of the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#option for more details.
+        修改仿真的全局介质粘度。
+        详见 http://www.mujoco.org/book/XMLreference.html#option。
 
         Args:
-            name (str): Name for this element. Should be left as None (opt has no name attribute)
-            val (float): New viscosity value.
+            name (str): 应设为 None（opt 没有 name 属性）。
+            val (float): 新的粘度值。
         """
-        # Make sure inputs are of correct form
+        # 确保输入形式正确
         assert name is None, "No name should be specified if modding density!"
 
-        # Modify this value
+        # 修改粘度值
         self.sim.model.opt.viscosity = val
 
     def mod_position(self, name, val=(0, 0, 0)):
         """
-        Modifies the @name's relative body position within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#body for more details.
+        修改指定 body 的相对位置。
+        详见 http://www.mujoco.org/book/XMLreference.html#body。
 
         Args:
-            name (str): Name for this element.
-            val (3-array): New (x, y, z) relative position.
+            name (str): body 名称。
+            val (3 数组): 新的相对位置 (x, y, z)。
         """
-        # Modify this value
+        # 直接修改模型中的 body 位置
         body_id = self.sim.model.body_name2id(name)
         self.sim.model.body_pos[body_id] = np.array(val)
 
     def mod_quaternion(self, name, val=(1, 0, 0, 0)):
         """
-        Modifies the @name's relative body orientation (quaternion) within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#body for more details.
+        修改指定 body 的相对朝向（四元数）。
+        详见 http://www.mujoco.org/book/XMLreference.html#body。
 
-        Note: This method automatically normalizes the inputted value.
+        注意：本方法会自动对输入四元数进行归一化。
 
         Args:
-            name (str): Name for this element.
-            val (4-array): New (w, x, y, z) relative quaternion.
+            name (str): body 名称。
+            val (4 数组): 新的相对四元数 (w, x, y, z)。
         """
-        # Normalize the inputted value
+        # 对输入四元数归一化
         val = np.array(val) / np.linalg.norm(val)
-        # Modify this value
+        # 修改 body 朝向
         body_id = self.sim.model.body_name2id(name)
         self.sim.model.body_quat[body_id] = val
 
     def mod_inertia(self, name, val):
         """
-        Modifies the @name's relative body inertia within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#body for more details.
+        修改指定 body 的相对惯量。
+        详见 http://www.mujoco.org/book/XMLreference.html#body。
 
         Args:
-            name (str): Name for this element.
-            val (3-array): New (ixx, iyy, izz) diagonal values in the inertia matrix.
+            name (str): body 名称。
+            val (3 数组): 惯量矩阵对角线的新值 (ixx, iyy, izz)。
         """
-        # Modify this value if it's not a dummy body
+        # 跳过虚拟 body（质量为 0），避免破坏模型结构
         if name not in self.dummy_bodies:
             body_id = self.sim.model.body_name2id(name)
             self.sim.model.body_inertia[body_id] = np.array(val)
 
     def mod_mass(self, name, val):
         """
-        Modifies the @name's mass within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#body for more details.
+        修改指定 body 的质量。
+        详见 http://www.mujoco.org/book/XMLreference.html#body。
 
         Args:
-            name (str): Name for this element.
-            val (float): New mass.
+            name (str): body 名称。
+            val (float): 新的质量值。
         """
-        # Modify this value if it's not a dummy body
+        # 跳过虚拟 body，防止破坏模型基础结构
         if name not in self.dummy_bodies:
             body_id = self.sim.model.body_name2id(name)
             self.sim.model.body_mass[body_id] = val
 
     def mod_friction(self, name, val):
         """
-        Modifies the @name's geom friction within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#geom for more details.
+        修改指定 geom 的摩擦参数。
+        详见 http://www.mujoco.org/book/XMLreference.html#geom。
 
         Args:
-            name (str): Name for this element.
-            val (3-array): New (sliding, torsional, rolling) friction values.
+            name (str): geom 名称。
+            val (3 数组): 新的摩擦值 (sliding, torsional, rolling)。
         """
-        # Modify this value
         geom_id = self.sim.model.geom_name2id(name)
         self.sim.model.geom_friction[geom_id] = np.array(val)
 
     def mod_solref(self, name, val):
         """
-        Modifies the @name's geom contact solver parameters within the simulation.
-        See http://www.mujoco.org/book/modeling.html#CSolver for more details.
+        修改指定 geom 的接触求解器参数 solref。
+        详见 http://www.mujoco.org/book/modeling.html#CSolver。
 
         Args:
-            name (str): Name for this element.
-            val (2-array): New (timeconst, dampratio) solref values.
+            name (str): geom 名称。
+            val (2 数组): 新的 solref 值 (timeconst, dampratio)。
         """
-        # Modify this value
         geom_id = self.sim.model.geom_name2id(name)
         self.sim.model.geom_solref[geom_id] = np.array(val)
 
     def mod_solimp(self, name, val):
         """
-        Modifies the @name's geom contact solver impedance parameters within the simulation.
-        See http://www.mujoco.org/book/modeling.html#CSolver for more details.
+        修改指定 geom 的接触求解器阻抗参数 solimp。
+        详见 http://www.mujoco.org/book/modeling.html#CSolver。
 
         Args:
-            name (str): Name for this element.
-            val (5-array): New (dmin, dmax, width, midpoint, power) solimp values.
+            name (str): geom 名称。
+            val (5 数组): 新的 solimp 值 (dmin, dmax, width, midpoint, power)。
         """
-        # Modify this value
         geom_id = self.sim.model.geom_name2id(name)
         self.sim.model.geom_solimp[geom_id] = np.array(val)
 
     def mod_stiffness(self, name, val):
         """
-        Modifies the @name's joint stiffness within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#joint for more details.
+        修改指定关节的刚度（stiffness）。
+        详见 http://www.mujoco.org/book/XMLreference.html#joint。
 
-        NOTE: If the stiffness is already at 0, we IGNORE this value since a non-stiff joint (i.e.: free-turning)
-            joint is fundamentally different than a stiffened joint)
+        注意：若关节原始刚度为 0，则忽略该修改，因为非刚性关节（自由旋转）
+              与刚性关节在物理本质上是不同的。
 
         Args:
-            name (str): Name for this element.
-            val (float): New stiffness.
+            name (str): 关节名称。
+            val (float): 新的刚度值。
         """
-        # Modify this value (only if there is stiffness to begin with)
+        # 仅当关节原本就有刚度时才修改
         jnt_id = self.sim.model.joint_name2id(name)
         if self.sim.model.jnt_stiffness[jnt_id] != 0:
             self.sim.model.jnt_stiffness[jnt_id] = val
 
     def mod_frictionloss(self, name, val):
         """
-        Modifies the @name's joint frictionloss within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#joint for more details.
+        修改指定关节的摩擦损耗（frictionloss）。
+        详见 http://www.mujoco.org/book/XMLreference.html#joint。
 
-        NOTE: If the requested joint is a free joint, it will be ignored since it does not
-            make physical sense to have friction loss associated with this joint (air drag / damping
-            is already captured implicitly by the medium density / viscosity values)
+        注意：若请求的是自由关节（free joint），则忽略该修改，因为自由关节的
+              空气阻力/阻尼已由介质密度和粘度隐式描述。
 
         Args:
-            name (str): Name for this element.
-            val (float): New friction loss.
+            name (str): 关节名称。
+            val (float): 新的摩擦损耗值。
         """
-        # Modify this value (only if it's not a free joint)
+        # 仅对非自由关节修改
         jnt_id = self.sim.model.joint_name2id(name)
         if self.sim.model.jnt_type[jnt_id] != 0:
             dof_idx = [i for i, v in enumerate(self.sim.model.dof_jntid) if v == jnt_id]
@@ -1930,18 +1957,16 @@ class DynamicsModder(BaseModder):
 
     def mod_damping(self, name, val):
         """
-        Modifies the @name's joint damping within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#joint for more details.
+        修改指定关节的阻尼（damping）。
+        详见 http://www.mujoco.org/book/XMLreference.html#joint。
 
-        NOTE: If the requested joint is a free joint, it will be ignored since it does not
-            make physical sense to have damping associated with this joint (air drag / damping
-            is already captured implicitly by the medium density / viscosity values)
+        注意：若请求的是自由关节，则忽略该修改，原因同上。
 
         Args:
-            name (str): Name for this element.
-            val (float): New damping.
+            name (str): 关节名称。
+            val (float): 新的阻尼值。
         """
-        # Modify this value (only if it's not a free joint)
+        # 仅对非自由关节修改
         jnt_id = self.sim.model.joint_name2id(name)
         if self.sim.model.jnt_type[jnt_id] != 0:
             dof_idx = [i for i, v in enumerate(self.sim.model.dof_jntid) if v == jnt_id]
@@ -1949,14 +1974,16 @@ class DynamicsModder(BaseModder):
 
     def mod_armature(self, name, val):
         """
-        Modifies the @name's joint armature within the simulation.
-        See http://www.mujoco.org/book/XMLreference.html#joint for more details.
+        修改指定关节的电枢（armature）。
+        详见 http://www.mujoco.org/book/XMLreference.html#joint。
+
+        注意：若请求的是自由关节，则忽略该修改。
 
         Args:
-            name (str): Name for this element.
-            val (float): New armature.
+            name (str): 关节名称。
+            val (float): 新的电枢值。
         """
-        # Modify this value (only if it's not a free joint)
+        # 仅对非自由关节修改
         jnt_id = self.sim.model.joint_name2id(name)
         if self.sim.model.jnt_type[jnt_id] != 0:
             dof_idx = [i for i, v in enumerate(self.sim.model.dof_jntid) if v == jnt_id]
@@ -1966,22 +1993,22 @@ class DynamicsModder(BaseModder):
     def dynamics_parameters(self):
         """
         Returns:
-            set: All dynamics parameters that can be randomized using this modder.
+            set: 本 Modder 支持随机化的所有动力学参数名称。
         """
         return {
-            # Opt parameters
+            # Opt（优化器/全局）参数
             "density",
             "viscosity",
-            # Body parameters
+            # Body 参数
             "position",
             "quaternion",
             "inertia",
             "mass",
-            # Geom parameters
+            # Geom 参数
             "friction",
             "solref",
             "solimp",
-            # Joint parameters
+            # Joint 参数
             "stiffness",
             "frictionloss",
             "damping",
@@ -1992,6 +2019,6 @@ class DynamicsModder(BaseModder):
     def opt(self):
         """
         Returns:
-             PyMjOption: MjModel sim options
+             PyMjOption: MjModel 的仿真选项（opt）对象
         """
         return self.sim.model.opt

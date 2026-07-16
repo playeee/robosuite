@@ -1,57 +1,57 @@
-# Sim-to-Real Transfer
-This page covers the randomization techniques to narrow the reality gap of our robotics simulation. These techniques, which concerns about [visual observations](#visuals), [system dynamics](#dynamics), and [sensors](#sensors), are employed to improve the efficacy of transferring our simulation-trained models to the real world.
+# 仿真到真实的迁移
+本页面涵盖缩小机器人仿真现实差距的随机化技术。这些技术涉及[视觉观测](#视觉)、[系统动力学](#动力学)和[传感器](#传感器)，用于提高将仿真训练模型迁移到真实世界的有效性。
 
 
-## Visuals
+## 视觉
 
-It is well shown that randomizing the visuals in simulation can play an important role in sim2real applications. **robosuite** provides various `Modder` classes to control different aspects of the visual environment. This includes:
+已经充分证明，在仿真中随机化视觉在 sim2real 应用中可以发挥重要作用。**robosuite** 提供了各种 `Modder` 类来控制视觉环境的不同方面。这包括：
 
-- `CameraModder`: Modder for controlling camera parameters, including FOV and pose
-- `TextureModder`: Modder for controlling visual objects' appearances, including texture and material properties
-- `LightingModder`: Modder for controlling lighting parameters, including light source properties and pose
+- `CameraModder`：用于控制相机参数的 Modder，包括视场角（FOV）和位姿
+- `TextureModder`：用于控制可视物体外观的 Modder，包括纹理和材质属性
+- `LightingModder`：用于控制光照参数的 Modder，包括光源属性和位姿
 
-Each of these Modders can be used by the user to directly override default simulation settings, or to randomize their respective properties mid-sim. We provide [demo_domain_randomization.py](../demos.html#domain-randomization) to showcase all of these modders being applied to randomize an environment during every sim step.
+用户可以使用这些 Modder 直接覆盖默认仿真设置，或在仿真过程中随机化其各自的属性。我们提供了 [demo_domain_randomization.py](../demos.html#domain-randomization) 来展示所有这些 modder 在每个仿真步中应用于随机化环境。
 
 
-## Dynamics
+## 动力学
 
-In order to achieve reasonable runtime speeds, many physics simulation platforms often must simplify the underlying physics model. Mujoco is no different, and as a result, many parameters such as friction, damping, and contact constraints do not fully capture real-world dynamics.
+为了实现合理的运行时速度，许多物理仿真平台通常必须简化底层物理模型。Mujoco 也不例外，因此，摩擦、阻尼和接触约束等许多参数无法完全捕捉真实世界的动力学。
 
-To better compensate for this, **robosuite** provides the `DynamicsModder` class, which can control individual dynamics parameters for each model within an environment. Theses parameters are sorted by element group, and briefly described below (for more information, please see [Mujoco XML Reference](http://www.mujoco.org/book/XMLreference.html)):
+为了更好地补偿这一点，**robosuite** 提供了 `DynamicsModder` 类，可以控制环境中每个模型的各个动力学参数。这些参数按元素组分类，下面进行了简要描述（更多信息，请参见 [Mujoco XML 参考](http://www.mujoco.org/book/XMLreference.html)）：
  
-#### Opt (Global) Parameters
-- `density`: Density of the medium (i.e.: air)
-- `viscosity`: Viscosity of the medium (i.e.: air)
+#### Opt（全局）参数
+- `density`：介质（如空气）的密度
+- `viscosity`：介质（如空气）的粘度
 
-#### Body Parameters
-- `position`: (x, y, z) Position of the body relative to its parent body
-- `quaternion`: (qw, qx, qy, qz) Quaternion of the body relative to its parent body
-- `inertia`: (ixx, iyy, izz) diagonal components of the inertia matrix associated with this body
-- `mass`: mass of the body
+#### Body 参数
+- `position`：(x, y, z) 物体相对于父物体的位置
+- `quaternion`：(qw, qx, qy, qz) 物体相对于父物体的四元数
+- `inertia`：(ixx, iyy, izz) 与此物体相关的惯性矩阵的对角分量
+- `mass`：物体的质量
 
-#### Geom Parameters
-- `friction`: (sliding, torsional, rolling) friction values for this geom
-- `solref`: (timeconst, dampratio) contact solver values for this geom
-- `solimp`: (dmin, dmax, width, midpoint, power) contact solver impedance values for this geom
+#### Geom 参数
+- `friction`：(滑动、扭转、滚动) 此 geom 的摩擦值
+- `solref`：(timeconst, dampratio) 此 geom 的接触求解器值
+- `solimp`：(dmin, dmax, width, midpoint, power) 此 geom 的接触求解器阻抗值
 
-#### Joint parameters
-- `stiffness`: Stiffness for this joint
-- `frictionloss`: Friction loss associated with this joint
-- `damping`: Damping value for this joint
-- `armature`: Gear inertia for this joint
+#### Joint 参数
+- `stiffness`：此关节的刚度
+- `frictionloss`：与此关节相关的摩擦损失
+- `damping`：此关节的阻尼值
+- `armature`：此关节的齿轮惯性
 
-This `DynamicsModder` follows the same basic API as the other `Modder` classes, and allows per-parameter and per-group randomization enabling. Apart from randomization, this modder can also be instantiated to selectively modify values at runtime. A brief example is given below:
+此 `DynamicsModder` 遵循与其他 `Modder` 类相同的基本 API，并允许启用逐参数和逐组的随机化。除了随机化之外，此 modder 还可以实例化以在运行时选择性地修改值。下面给出了一个简短的示例：
 
 ```python
 import robosuite as suite
 from robosuite.utils.mjmod import DynamicsModder
 import numpy as np
 
-# Create environment and modder
+# 创建环境和 modder
 env = suite.make("Lift", robots="Panda")
 modder = DynamicsModder(sim=env.sim, random_state=np.random.RandomState(5))
 
-# Define function for easy printing
+# 定义用于轻松打印的函数
 cube_body_id = env.sim.model.body_name2id(env.cube.root_body)
 cube_geom_ids = [env.sim.model.geom_name2id(geom) for geom in env.cube.contact_geoms]
 
@@ -60,81 +60,81 @@ def print_params():
     print(f"cube frictions: {env.sim.model.geom_friction[cube_geom_ids]}")
     print()
 
-# Print out initial parameter values
+# 打印初始参数值
 print("INITIAL VALUES")
 print_params()
 
-# Modify the cube's properties
-modder.mod(env.cube.root_body, "mass", 5.0)                                # make the cube really heavy
+# 修改方块属性
+modder.mod(env.cube.root_body, "mass", 5.0)                                # 使方块非常重
 for geom_name in env.cube.contact_geoms:
-    modder.mod(geom_name, "friction", [2.0, 0.2, 0.04])           # greatly increase the friction
-modder.update()                                                   # make sure the changes propagate in sim
+    modder.mod(geom_name, "friction", [2.0, 0.2, 0.04])           # 大幅增加摩擦
+modder.update()                                                   # 确保更改在仿真中传播
 
-# Print out modified parameter values
+# 打印修改后的参数值
 print("MODIFIED VALUES")
 print_params()
 
-# We can also restore defaults (original values) at any time
+# 我们还可以随时恢复默认值（原始值）
 modder.restore_defaults()
 
-# Print out restored initial parameter values
+# 打印恢复后的初始参数值
 print("RESTORED VALUES")
 print_params()
 ```
 
-Running [demo_domain_randomization.py](../demos.html#domain-randomization) is another method for demo'ing (albeit an extreme example of) this functionality.
+运行 [demo_domain_randomization.py](../demos.html#domain-randomization) 是演示此功能的另一种方法（尽管是一个极端示例）。
 
-Note that the modder already has some sanity checks in place to prevent presumably undesired / non-sensical behavior, such as adding damping / frictionloss to a free joint or setting a non-zero stiffness value to a joint that is normally non-stiff to begin with.
+请注意，modder 已经有一些合理性检查，以防止可能不良/无意义的行为，例如向自由关节添加阻尼/摩擦损失，或向通常本身不刚硬的关节设置非零刚度值。
 
 
-## Sensors
+## 传感器
 
-By default, Mujoco sensors are deterministic and delay-free, which is often an unrealistic assumption to make in the real world. To better close this domain gap, **robosuite** provides a realistic, customizable interface via the [Observable](../source/robosuite.utils.html#module-robosuite.utils.observables) class API. Observables model realistic sensor sampling, in which ground truth data is sampled (`sensor`), passed through a corrupting function (`corrupter`), and then finally passed through a filtering function (`filter`). Moreover, each observable has its own `sampling_rate` and `delayer` function which simulates sensor delay. While default values are used to instantiate each observable during environment creation, each of these components can be modified by the user at runtime using `env.modify_observable(...)` . Moreover, each observable is assigned a modality, and are grouped together in the returned observation dictionary during the `env.step()` call. For example, if an environment consists of camera observations and a single robot's proprioceptive observations, the observation dict structure might look as follows:
+默认情况下，Mujoco 传感器是确定性的且无延迟，这在真实世界中通常是不切实际的假设。为了更好地缩小这一领域差距，**robosuite** 通过 [Observable](../source/robosuite.utils.html#module-robosuite.utils.observables) 类 API 提供了一个现实、可定制的接口。Observables 建模真实传感器采样，其中真值数据被采样（`sensor`），通过损坏函数（`corrupter`），最后通过滤波函数（`filter`）。此外，每个 observable 都有自己的 `sampling_rate` 和 `delayer` 函数来模拟传感器延迟。虽然在环境创建期间使用默认值实例化每个 observable，但用户可以在运行时使用 `env.modify_observable(...)` 修改这些组件中的每一个。此外，每个 observable 都被分配一个模态，并在 `env.step()` 调用期间在返回的观测字典中组合在一起。例如，如果一个环境包含相机观测和单个机器人的本体感受观测，则观测字典结构可能如下所示：
 
 ```python
 {
-    "frontview_image": np.array(...),    # this has modality "image"
-    "frontview_depth": np.array(...),    # this has modality "image"
-    "robot0_joint_pos": np.array(...),   # this has modality "robot0_proprio"
-    "robot0_gripper_pos": np.array(...), # this has modality "robot0_proprio"
-    "image-state": np.array(...),           # this is a concatenation of all image observations
-    "robot0_proprio-state": np.array(...),  # this is a concatenation of all robot0_proprio observations
+    "frontview_image": np.array(...),    # 模态为 "image"
+    "frontview_depth": np.array(...),    # 模态为 "image"
+    "robot0_joint_pos": np.array(...),   # 模态为 "robot0_proprio"
+    "robot0_gripper_pos": np.array(...), # 模态为 "robot0_proprio"
+    "image-state": np.array(...),           # 这是所有图像观测的拼接
+    "robot0_proprio-state": np.array(...),  # 这是所有 robot0_proprio 观测的拼接
 }
 ```
 
-Note that for memory efficiency the `image-state` is not returned by default (this can be toggled in `robosuite/macros.py`).
+请注意，为了内存效率，`image-state` 默认不返回（可以在 `robosuite/macros.py` 中切换）。
 
-We showcase how the `Observable` functionality can be used to model sensor corruption and delay via [demo_sensor_corruption.py](../demos.html#sensor-realism). We also highlight that each of the `sensor`, `corrupter`, and `filter` functions can be arbitrarily specified to suit the end-user's usage. For example, a common use case for these observables is to keep track of sampled values from a sensor operating at a higher frequency than the environment step (control) frequency. In this case, the `filter` function can be leveraged to keep track of the real-time sensor values as they're being sampled. We provide a minimal script showcasing this ability below:
+我们通过 [demo_sensor_corruption.py](../demos.html#sensor-realism) 展示如何使用 `Observable` 功能来建模传感器损坏和延迟。我们还强调，每个 `sensor`、`corrupter` 和 `filter` 函数都可以任意指定以满足最终用户的使用需求。例如，这些 observables 的一个常见用例是跟踪以高于环境步（控制）频率运行的传感器的采样值。在这种情况下，可以利用 `filter` 函数在采样实时传感器值时进行跟踪。我们在下面提供了一个展示此能力的最简脚本：
 
 ```python
 import robosuite as suite
 import numpy as np
 from robosuite.utils.buffers import RingBuffer
 
-# Create env instance
+# 创建环境实例
 control_freq = 10
 env = suite.make("Lift", robots="Panda", has_offscreen_renderer=False, use_camera_obs=False, control_freq=control_freq)
 
-# Define a ringbuffer to store joint position values
+# 定义一个环形缓冲区来存储关节位置值
 buffer = RingBuffer(dim=env.robots[0].robot_model.dof, length=10)
 
-# Create a function that we'll use as the "filter" for the joint position Observable
-# This is a pass-through operation, but we record the value every time it gets called
-# As per the Observables API, this should take in an arbitrary numeric and return the same type / shape
+# 创建一个函数，用作关节位置 Observable 的 "filter"
+# 这是一个直通操作，但每次调用时都记录该值
+# 根据 Observables API，这应接受任意数值并返回相同的类型/形状
 def filter_fcn(corrupted_value):
-    # Record the inputted value
+    # 记录输入值
     buffer.push(corrupted_value)
-    # Return this value (no-op performed)
+    # 返回此值（执行无操作）
     return corrupted_value
 
-# Now, let's enable the joint position Observable with this filter function
+# 现在，让我们使用此 filter 函数启用关节位置 Observable
 env.modify_observable(
     observable_name="robot0_joint_pos",
     attribute="filter",
     modifier=filter_fcn,
 )
 
-# Let's also increase the sampling rate to showcase the Observable's ability to update multiple times per env step
+# 让我们提高采样率以展示 Observable 在每个环境步中多次更新的能力
 obs_sampling_freq = control_freq * 4
 env.modify_observable(
     observable_name="robot0_joint_pos",
@@ -142,11 +142,11 @@ env.modify_observable(
     modifier=obs_sampling_freq,
 )
 
-# Take a single environment step with positive joint velocity actions
+# 以正关节速度动作执行单个环境步
 action = np.ones(env.robots[0].robot_model.dof) * 1.0
 env.step(action)
 
-# Now we can analyze what values were recorded
+# 现在我们可以分析记录了哪些值
 np.set_printoptions(precision=2)
 print(f"\nPolicy Frequency: {control_freq}, Observable Sampling Frequency: {obs_sampling_freq}")
 print(f"Number of recorded samples after 1 policy step: {buffer._size}\n")

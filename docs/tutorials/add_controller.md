@@ -1,21 +1,20 @@
+## 添加第三方控制器
 
-## Adding Third Party Controllers
+要在 robosuite 中使用第三方控制器，您需要：
+1. 创建一个新类，继承 `robosuite/controllers/composite/composite_controller.py` 中的某个复合控制器。
+2. 使用装饰器 `@register_composite_controller` 注册该复合控制器。
+3. 实现复合特定功能，最终为底层 `part_controller` 提供控制输入。
+4. 导入新类，以便通过 `@register_composite_controller` 装饰器将其添加到 robosuite 的 `REGISTERED_COMPOSITE_CONTROLLERS_DICT` 中。
+5. 在 json 文件中提供控制器特定配置以及新控制器的 `type`。
 
-To use a third-party controller with robosuite, you'll need to:
-1. Create a new class that subclasses one of the composite controllers in `robosuite/controllers/composite/composite_controller.py`.
-2. Register the composite controller with the decorator `@register_composite_controller`.
-3. Implement composite specific functionality that ultimately provides control input to the underlying `part_controller`'s.
-4. Import the new class so that it gets added to robosuite's `REGISTERED_COMPOSITE_CONTROLLERS_DICT` via the `@register_composite_controller` decorator.
-5. Provide controller specific configs and the new controller's `type` in a json file.
+对于继承 `WholeBody` 的新复合控制器，您主要需要更新 `joint_action_policy`。
 
-For the new composite controllers subclassing `WholeBody`, you'll mainly need to update `joint_action_policy`.
-
-We provide an example of how to use a third-party `WholeBodyMinkIK` composite controller with robosuite, in the `robosuite/examples/third_party_controller/` directory. You can run the command `python teleop_mink.py` example script to see a third-party controller in action. Note: to run this specific example, you'll need to `pip install mink`.
+我们在 `robosuite/examples/third_party_controller/` 目录中提供了一个示例，展示如何在 robosuite 中使用第三方 `WholeBodyMinkIK` 复合控制器。您可以运行命令 `python teleop_mink.py` 示例脚本来查看第三方控制器的运行情况。注意：要运行此特定示例，您需要 `pip install mink`。
 
 
-Steps 1 and 2:
+步骤 1 和 2：
 
-In `robosuite/examples/third_party_controller/mink_controller.py`:
+在 `robosuite/examples/third_party_controller/mink_controller.py` 中：
 
 ```
 @register_composite_controller
@@ -23,30 +22,30 @@ class WholeBodyMinkIK(WholeBody):
     name = "WHOLE_BODY_MINK_IK"
 ```
 
-Step 3:
+步骤 3：
 
-In `robosuite/examples/third_party_controller/mink_controller.py`, add logic specific to the new composite controller:
+在 `robosuite/examples/third_party_controller/mink_controller.py` 中，添加特定于新复合控制器的逻辑：
 
 ```
 self.joint_action_policy = IKSolverMink(...)
 ```
 
-Step 4:
+步骤 4：
 
-In `teleop_mink.py`, we import:
+在 `teleop_mink.py` 中，我们导入：
 
 ```
 from robosuite.examples.third_party_controller.mink_controller import WholeBodyMinkIK
 ```
 
-Step 5:
+步骤 5：
 
-In `robosuite/examples/third_party_controller/default_mink_ik_gr1.json`, we add configs specific to our new composite controller. and also set the `type` to
-match the `name` specified in `WholeBodyMinkIK`:
+在 `robosuite/examples/third_party_controller/default_mink_ik_gr1.json` 中，我们添加特定于新复合控制器的配置，并将 `type` 设置为
+与 `WholeBodyMinkIK` 中指定的 `name` 匹配：
 
 ```
 {
-    "type": "WHOLE_BODY_MINK_IK",  # set the correct type
+    "type": "WHOLE_BODY_MINK_IK",  # 设置正确的类型
     "composite_controller_specific_configs": {
             ...
     },
