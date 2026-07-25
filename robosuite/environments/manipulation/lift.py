@@ -285,6 +285,11 @@ class Lift(ManipulationEnv):
         #   - 子目标之间有逻辑先后顺序（必须先接近才能抓取，先抓取才能抬起）
         # ───────────────────────────────────────────────────────────────────────
         # =========================================================================
+        # 初始化本步奖励分量（供外部 wrapper / 可视化工具读取）
+        self._last_reaching_reward = 0.0
+        self._last_grasping_reward = 0.0
+        self._last_success_reward = 0.0
+
         reward = 0.0
 
         # =========================================================================
@@ -304,6 +309,7 @@ class Lift(ManipulationEnv):
         # =========================================================================
         if self._check_success():
             reward = 2.25
+            self._last_success_reward = 2.25
 
         # =========================================================================
         # 阶段1 + 阶段2：稠密奖励（reward shaping）
@@ -343,6 +349,7 @@ class Lift(ManipulationEnv):
             )
             reaching_reward = 1 - np.tanh(10.0 * dist)
             reward += reaching_reward
+            self._last_reaching_reward = reaching_reward
 
             # ----------------------------------------------------------------------
             # 阶段2: Grasping reward（抓取奖励）
@@ -364,6 +371,7 @@ class Lift(ManipulationEnv):
             # ----------------------------------------------------------------------
             if self._check_grasp(gripper=self.robots[0].gripper, object_geoms=self.cube):
                 reward += 0.25
+                self._last_grasping_reward = 0.25
 
         # =========================================================================
         # 奖励归一化与缩放
@@ -380,7 +388,11 @@ class Lift(ManipulationEnv):
         # 若指定了 reward_scale，则按比例缩放奖励
         # =========================================================================
         if self.reward_scale is not None:
-            reward *= self.reward_scale / 2.25
+            scale = self.reward_scale / 2.25
+            reward *= scale
+            self._last_reaching_reward *= scale
+            self._last_grasping_reward *= scale
+            self._last_success_reward *= scale
 
         return reward
 

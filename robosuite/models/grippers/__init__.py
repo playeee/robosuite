@@ -15,6 +15,7 @@ from .null_gripper import NullGripper
 from .inspire_hands import InspireLeftHand, InspireRightHand
 from .fourier_hands import FourierLeftHand, FourierRightHand
 from .xarm7_gripper import XArm7Gripper
+from .so101_gripper import SO101Gripper
 from .suction_gripper import SuctionGripper
 
 GRIPPER_MAPPING = {
@@ -33,6 +34,7 @@ GRIPPER_MAPPING = {
     "FourierLeftHand": FourierLeftHand,
     "FourierRightHand": FourierRightHand,
     "XArm7Gripper": XArm7Gripper,
+    "SO101Gripper": SO101Gripper,
     "SuctionGripper": SuctionGripper,
     None: NullGripper,
 }
