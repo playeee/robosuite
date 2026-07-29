@@ -88,7 +88,7 @@ COLLECT_TRAINING_ROLLOUTS = True
 SAVE_TEST_ROLLOUTS = True
 
 # 是否继续训练
-RESUME = False
+RESUME = True
 MODEL_PATH = "lift_so101_sac_realistic.zip"
 VEC_NORMALIZE_PATH = "vec_normalize_so101.pkl"
 
@@ -129,7 +129,11 @@ def make_env():
         name="SO101ObjectSampler",
         x_range=[-0.28, -0.12],
         y_range=[-0.08, 0.08],
-        rotation=None,
+        # rotation=None 会在 z 轴上施加 0~2π 均匀随机旋转，使 cube 的有效水平
+        # 宽度从边长(44mm)变为面对角线(62mm)。SO101 hinge 夹爪的最大有效内间隙
+        # 仅 ~55mm，无法容纳 62mm 的对角线 → pad 穿透 cube → "穿模"。
+        # 设为 0（轴对齐）使 cube 宽度固定为 44mm，夹爪间隙 46~55mm 足以容纳。
+        rotation=0,
         ensure_object_boundary_in_range=False,
         ensure_valid_placement=True,
         reference_pos=(0, 0, 0.8),
@@ -296,6 +300,12 @@ def main():
         batch_size=256,
         tau=0.005,
         gamma=0.99,
+        # 熵系数：防止策略过早收敛到确定性策略。
+        # SAC_19 中 ent_coef 从 0.94 降到 0.0007，策略在 500K 步后失去探索能力，
+        # 收敛到"接近但不抓取"的局部最优。设 ent_coef="auto" 但降低 target_entropy
+        # 使策略需要维持更高的熵，从而延长探索期。
+        ent_coef="auto",
+        target_entropy=-1.5,  # 默认 -dim(A)/2 = -3，改为 -1.5 增加探索
         policy_kwargs=dict(net_arch=[256, 256], use_sde=False),
         device="auto",
     )

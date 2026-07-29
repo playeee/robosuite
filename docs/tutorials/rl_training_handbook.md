@@ -409,15 +409,17 @@ conda activate robosuite
 # 2. 启动训练
 python robosuite/demos/train_rl_sb3.py
 conda run -n robosuite python robosuite/demos/train_rl_sb3_so101_realistic_ppo.py
+conda run -n robosuite python robosuite/demos/train_rl_sb3_so101_realistic.py
 
 
 # 3. 另开终端启动 TensorBoard
 conda run -n robosuite tensorboard --logdir=./logs/sac_lift/ --port=6006
-conda run -n robosuite tensorboard --logdir=./logs/ppo_lift_so101_realistic/ --port=6006
-conda run -n robosuite tensorboard --logdir=./logs/sac_lift_so101_realistic/ --port=6007
+conda run -n robosuite tensorboard --logdir=./logs/ppo_lift_so101_realistic/ --port=6007
+conda run -n robosuite tensorboard --logdir=./logs/sac_lift_so101_realistic/ --port=6008
 
 # 4. 浏览器打开
 # http://localhost:6006
+# http://localhost:6007
 
 # 5. 训练完成后，可视化评估
 conda run -n robosuite python robosuite/demos/evaluate_rl.py

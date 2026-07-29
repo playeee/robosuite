@@ -20,16 +20,15 @@ except ImportError:
 # 顺序刻意分为：任务进度（正）→ 运动质量（负）→ 行为先验（正）→ 总量。
 REWARD_COMPONENTS = [
     # 任务进度（正信号，反映策略是否在完成任务）
-    "reward_reach",         # 接近 cube
-    "reward_grasp",         # 抓住 cube
-    "reward_lift",          # 抬起 cube
+    "reward_reach",         # 接近 cube（PBRS 差分）
+    "reward_grasp",         # 抓住 cube（二值）
+    "reward_lift",          # 抬起 cube（连续）
+    "reward_grip_close",    # 接近时闭合夹爪（条件引导）
     # 运动质量惩罚（负信号，反映运动是否平稳/合理）
     "reward_smooth",        # 动作平滑度
     "reward_vel",           # 关节速度
     "reward_ee_vel",        # 末端速度
     "reward_z_float",       # 末端悬浮
-    # 行为先验
-    "reward_gripper_move",  # 夹爪运动
     # 总量（用于校验分解求和是否等于实际奖励）
     "original_reward",      # robosuite 原始奖励（成功时为 2.25）
     "shaped_reward",        # 合成后的最终单步奖励
@@ -197,7 +196,7 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         # 抓取奖励 r_grasp：二值里程碑，抓到即给一次性奖励（每步都给，直到松开）。
         #   仅当夹爪与 cube 接触时为 w_grasp，否则 0。用于在 reach 与 lift 之间
         #   建立"抓取"过渡信号，避免策略直接从接近跳到抬升而未真正抓住。
-        self.w_grasp = 0.50
+        self.w_grasp = 1.0
 
         # 抬升奖励 r_lift：cube 相对其“静止放置高度”被抬起的高度（米），
         # 归一化到 [0, w_lift]。公式：r_lift = w_lift * clip(h / target, 0, 1)。
@@ -206,8 +205,8 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         # table_offset[2] 为基线，cube 不动也会持续拿到 ~0.5/step 的“抬升奖励”，
         # 这正是“机械臂抬起来就不下来、任务全失败却奖励 ~85”的根因。
         # 调参：target 过小 → 轻抬即满分不再继续；过大 → 信号过稀疏。
-        self.w_lift = 1.00            # 抬升满分（cube 抬到 target_height 时）
-        self.lift_target_height = 0.04  # 目标抬升高度（米），4cm 即给满 lift 奖励
+        self.w_lift = 1.50            # 抬升满分（cube 抬到 target_height 时）
+        self.lift_target_height = 0.05  # 目标抬升高度（米），5cm 即给满 lift 奖励
         self._cube_rest_z = None  # 在 reset 时记录 cube 静止放置时的 z（米）
 
         # ==================================================================
@@ -224,13 +223,13 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         #   公式：r_smooth = -w * sum((a_t - a_{t-1})^2)
         #   action 为归一化 [-1,1] 动作，平方和维度=action_dim。
         #   0.05 → 0.02：让策略敢于尝试不同动作（SAC 探索所需）
-        self.w_action_smooth = 0.02
+        self.w_action_smooth = 0.01
 
         # 关节速度 r_vel：惩罚关节角速度过大，鼓励低速平稳运动。
         #   公式：r_vel = -w * sum(qvel^2)，qvel 来自 MuJoCo sim.data.qvel。
         #   注意：qvel 量级可达几~十几，平方后较大，故 w 取很小值。
         #   0.005 → 0.002：适度降低，让策略敢于动关节
-        self.w_joint_vel = 0.002
+        self.w_joint_vel = 0.001
 
         # 末端速度 r_ee_vel：惩罚 eef 高频抖动（位移变化）。
         #   公式：r_ee_vel = -w * sum((eef_t - eef_{t-1})^2)
@@ -239,7 +238,7 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         #   0.10 → 0.03：实测 ee_vel 均值仅 -0.0005（已几乎不动），说明 0.10
         #   仍过大，让策略不敢下降。降到 0.03 释放运动自由度。
         #   调参：若策略运动迟缓 → 调小；若末端抖动明显 → 调大。
-        self.w_ee_vel = 0.03
+        self.w_ee_vel = 0.02
 
         # 末端悬浮惩罚 r_z_float：eef 明显高于 cube 时按高度差给予负奖励，
         # 抑制“抬起来就不下来”。
@@ -253,7 +252,7 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         #
         # 调参：threshold 过大 → 正常接近被误伤；过小 → 无法抑制悬浮。
         self.w_z_float = 0.50
-        self.z_float_threshold = 0.04  # eef 比 cube 高 4cm 以上开始惩罚（米）
+        self.z_float_threshold = 0.05  # eef 比 cube 高 5cm 以上开始惩罚（米）
 
         # ==================================================================
         # 行为先验奖励系数（正信号：引导更自然的抓取-抬升行为）
@@ -265,6 +264,15 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         #   调参：若策略夹爪始终不动 → 适当提高 w；若抖动刷分 → 降低 max_gripper_move。
         self.w_gripper_move = 0.02
         self.max_gripper_move = 0.05  # 单步夹爪运动量上限（截断阈值）
+
+        # 接近时闭合夹爪奖励 r_grip_close：条件引导，只在 EEF 靠近 cube 时
+        # 鼓励夹爪闭合。公式：r = w * proximity * (1 - openness)
+        #   - proximity = max(0, 1 - dist/threshold)：距离越近权重越大
+        #   - (1 - openness)：夹爪越闭合得分越高
+        #   - 远离 cube 时 proximity=0，奖励自动归零，不会阻碍接近行为
+        # 调参：w 过大 → 策略过早闭合影响接近；w 过小 → 学不到闭合
+        self.w_grip_close = 0.5
+        self.grip_close_dist_threshold = 0.05  # 10cm 以内开始鼓励闭合
 
     def reset(self, **kwargs):
         """重置环境并初始化所有"上一步"历史状态。
@@ -304,15 +312,97 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         # 获取底层 robosuite 环境，用于计算任务进度奖励
         base_env = self._get_base_env()
 
-        # easy 模式：只记录 lift.py 的原始奖励分量，不叠加自定义 shaping
+        # easy 模式：记录 lift.py 的原始奖励分量，并叠加自定义 shaping
+        # robosuite 内置的稠密奖励（reaching + grasping）信号太弱，策略学不到
+        # "接近→闭合夹爪→抓取→抬起"的完整行为链。本 wrapper 叠加额外的
+        # shaping 信号来弥补：PBRS 接近奖励、夹爪闭合引导、抬升过渡信号、
+        # 悬浮惩罚等。
         if self.mode == "easy":
             info["lift_reaching_reward"] = float(getattr(base_env, "_last_reaching_reward", 0.0))
             info["lift_grasping_reward"] = float(getattr(base_env, "_last_grasping_reward", 0.0))
             info["lift_success_reward"] = float(getattr(base_env, "_last_success_reward", 0.0))
+
+            eef_pos = self._get_eef_pos()
+            gripper_qpos = self._get_gripper_qpos()
+            cube_pos = self._get_cube_pos()
+
+            # PBRS 接近奖励
+            dist = base_env._gripper_to_target(
+                gripper=base_env.robots[0].gripper,
+                target=base_env.cube.root_body,
+                target_type="body",
+                return_distance=True,
+            )
+            if self.last_dist is None:
+                r_reach = 0.0
+            else:
+                r_reach = self.w_reach_pbrs * (
+                    np.tanh(self.reach_pbrs_scale * self.last_dist)
+                    - np.tanh(self.reach_pbrs_scale * dist)
+                )
+
+            # 抓取奖励
+            grasped = base_env._check_grasp(
+                gripper=base_env.robots[0].gripper,
+                object_geoms=base_env.cube.contact_geoms,
+            )
+            r_grasp = self.w_grasp if grasped else 0.0
+
+            # 抬升奖励
+            cube_height = base_env.sim.data.body_xpos[base_env.cube_body_id][2]
+            rest_z = self._cube_rest_z if self._cube_rest_z is not None else cube_height
+            lift_height = max(0.0, cube_height - rest_z)
+            lift_ratio = np.clip(lift_height / self.lift_target_height, 0.0, 1.0)
+            r_lift = self.w_lift * lift_ratio
+
+            # 接近时闭合夹爪奖励：当 EEF 靠近 cube 时，鼓励夹爪闭合
+            # 这是解决"接近但不抓取"问题的关键信号
+            grip_openness = self._get_gripper_opening_ratio()
+            proximity = max(0.0, 1.0 - dist / self.grip_close_dist_threshold)
+            r_grip_close = self.w_grip_close * proximity * (1.0 - grip_openness)
+
+            # 运动质量惩罚
+            action_delta = action - self.last_action
+            r_smooth = -self.w_action_smooth * float(np.sum(action_delta ** 2))
+            joint_vel = self._get_joint_vel()
+            r_vel = -self.w_joint_vel * float(np.sum(joint_vel ** 2))
+            ee_delta = eef_pos - self.last_eef_pos
+            r_ee_vel = -self.w_ee_vel * float(np.sum(ee_delta ** 2))
+            height_above_cube = eef_pos[2] - cube_pos[2]
+            r_z_float = -self.w_z_float * max(0.0, height_above_cube - self.z_float_threshold)
+
+            # 合成 shaped reward
+            shaped_reward = (
+                reward
+                + r_reach
+                + r_grasp
+                + r_lift
+                + r_grip_close
+                + r_smooth
+                + r_vel
+                + r_ee_vel
+                + r_z_float
+            )
+
+            # 记录到 info
             info["original_reward"] = reward
-            info["shaped_reward"] = reward
+            info["shaped_reward"] = shaped_reward
+            info["reward_reach"] = r_reach
+            info["reward_grasp"] = r_grasp
+            info["reward_lift"] = r_lift
+            info["reward_grip_close"] = r_grip_close
+            info["reward_smooth"] = r_smooth
+            info["reward_vel"] = r_vel
+            info["reward_ee_vel"] = r_ee_vel
+            info["reward_z_float"] = r_z_float
+
+            # 更新历史状态
             self.last_action = np.array(action, dtype=np.float32)
-            return obs, reward, terminated, truncated, info
+            self.last_eef_pos = eef_pos
+            self.last_gripper_qpos = gripper_qpos
+            self.last_dist = float(dist)
+
+            return obs, shaped_reward, terminated, truncated, info
         eef_pos = self._get_eef_pos()          # 末端位置 (x,y,z)，米
         gripper_qpos = self._get_gripper_qpos()  # 夹爪关节位置
         cube_pos = self._get_cube_pos()         # cube 中心位置 (x,y,z)，米
@@ -381,9 +471,10 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         # ==================================================================
         # 行为先验奖励（正信号，弱引导）
         # ==================================================================
-        # 夹爪运动量：夹爪关节位置变化的绝对值之和；min 截断防止刷分
-        gripper_move = float(np.abs(gripper_qpos - self.last_gripper_qpos).sum())
-        r_gripper_move = self.w_gripper_move * min(gripper_move, self.max_gripper_move)
+        # 接近时闭合夹爪奖励（与 easy 模式相同逻辑）
+        grip_openness = self._get_gripper_opening_ratio()
+        proximity = max(0.0, 1.0 - dist / self.grip_close_dist_threshold)
+        r_grip_close = self.w_grip_close * proximity * (1.0 - grip_openness)
 
         # ==================================================================
         # 奖励合成：原始 sparse reward + 所有分项
@@ -395,11 +486,11 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
             + r_reach
             + r_grasp
             + r_lift
+            + r_grip_close
             + r_smooth
             + r_vel
             + r_ee_vel
             + r_z_float
-            + r_gripper_move
         )
 
         # 将各分项写入 info，供诊断脚本/可视化/analyze_rollouts 读取。
@@ -409,11 +500,11 @@ class SO101LiftRewardShapingWrapper(gym.Wrapper):
         info["reward_reach"] = r_reach
         info["reward_grasp"] = r_grasp
         info["reward_lift"] = r_lift
+        info["reward_grip_close"] = r_grip_close
         info["reward_smooth"] = r_smooth
         info["reward_vel"] = r_vel
         info["reward_ee_vel"] = r_ee_vel
         info["reward_z_float"] = r_z_float
-        info["reward_gripper_move"] = r_gripper_move
 
         # 更新历史状态：必须在计算完所有 delta 后再更新，否则本步用了"本步"值
         self.last_action = np.array(action, dtype=np.float32)

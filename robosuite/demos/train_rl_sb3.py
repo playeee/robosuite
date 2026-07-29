@@ -21,6 +21,95 @@ from robosuite.wrappers import GymWrapper
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
+
+# 兼容 gymnasium 和 openai gym
+try:
+    import gymnasium as gym
+except ImportError:
+    import gym
+
+
+# =============================================================================
+# 奖励分量日志 Wrapper + Callback
+# =============================================================================
+# Lift 环境的 reward() 方法会把 reaching / grasping / success 分量存为实例属性
+# （_last_reaching_reward, _last_grasping_reward, _last_success_reward）。
+# LiftRewardLoggingWrapper 读取这些属性写入 info，供 RewardBreakdownCallback
+# 记录到 TensorBoard，方便分析各奖励分量的变化趋势。
+
+class LiftRewardLoggingWrapper(gym.Wrapper):
+    """从 Lift 环境读取奖励分量并写入 info，供 TensorBoard 可视化。"""
+
+    def _get_base_env(self):
+        env = self.env
+        while hasattr(env, "env"):
+            env = env.env
+        return env
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        base_env = self._get_base_env()
+        info["lift_reaching_reward"] = float(getattr(base_env, "_last_reaching_reward", 0.0))
+        info["lift_grasping_reward"] = float(getattr(base_env, "_last_grasping_reward", 0.0))
+        info["lift_success_reward"] = float(getattr(base_env, "_last_success_reward", 0.0))
+        info["original_reward"] = reward
+        return obs, reward, terminated, truncated, info
+
+
+# 奖励分量键名（与 LiftRewardLoggingWrapper 写入 info 的键一致）
+LIFT_REWARD_COMPONENTS = [
+    "lift_reaching_reward",
+    "lift_grasping_reward",
+    "lift_success_reward",
+    "original_reward",
+]
+
+
+class RewardBreakdownCallback(BaseCallback):
+    """每 log_interval 步统计各奖励分量均值，打印到终端并写入 TensorBoard。"""
+
+    def __init__(self, log_interval=10000, verbose=0):
+        super().__init__(verbose)
+        self.log_interval = log_interval
+        self._acc = {name: 0.0 for name in LIFT_REWARD_COMPONENTS}
+        self._count = 0
+        self._last_report_step = 0
+
+    def _on_step(self):
+        infos = self.locals.get("infos")
+        if infos is None or len(infos) == 0:
+            return True
+
+        for info in infos:
+            if not isinstance(info, dict):
+                continue
+            for name in LIFT_REWARD_COMPONENTS:
+                if name in info:
+                    self._acc[name] += float(info[name])
+            self._count += 1
+
+        if self.num_timesteps - self._last_report_step >= self.log_interval and self._count > 0:
+            self._report()
+            self._acc = {name: 0.0 for name in LIFT_REWARD_COMPONENTS}
+            self._count = 0
+            self._last_report_step = self.num_timesteps
+        return True
+
+    def _report(self):
+        n = max(self._count, 1)
+        means = {name: self._acc[name] / n for name in LIFT_REWARD_COMPONENTS}
+
+        print(f"\n[RewardBreakdown] step {self.num_timesteps:,} | 统计 {self._count} 个 env-step")
+        for name in LIFT_REWARD_COMPONENTS:
+            print(f"  {name:24s}: {means[name]:+8.4f}")
+
+        try:
+            for name in LIFT_REWARD_COMPONENTS:
+                self.logger.record(f"reward_breakdown/{name}", means[name])
+            self.logger.dump(self.num_timesteps)
+        except Exception:
+            pass
 
 
 # =============================================================================
@@ -82,6 +171,11 @@ def make_env():
     # GymWrapper 自动完成这个转换，并生成 observation_space 和 action_space
     # =========================================================================
     env = GymWrapper(env)
+
+    # =========================================================================
+    # LiftRewardLoggingWrapper：读取奖励分量写入 info，供 TensorBoard 可视化
+    # =========================================================================
+    env = LiftRewardLoggingWrapper(env)
 
     # =========================================================================
     # Monitor：记录每个 episode 的奖励和长度（关键！）
@@ -276,7 +370,10 @@ def main():
     print(f"预计时间：20-40 分钟（取决于 CPU 性能）")
     print("=" * 60)
 
-    model.learn(total_timesteps=TOTAL_TIMESTEPS)
+    # 奖励分量监控：每 10000 步打印各 reward 分量均值并写入 TensorBoard
+    reward_breakdown_callback = RewardBreakdownCallback(log_interval=10000)
+
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=reward_breakdown_callback)
 
     # =========================================================================
     # 第六步：保存模型与归一化参数
