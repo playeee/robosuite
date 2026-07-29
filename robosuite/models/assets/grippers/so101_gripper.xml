@@ -32,10 +32,9 @@
               随角度变化，box 的长尺寸(0.018)会意外对齐闭合方向导致有效内间隙
               (19mm) < cube(44mm) → 深穿透 → cube 被弹开（表现为"穿模"）。
               sphere 彻底消除该方向依赖。
-            - radius=0.003: 经几何搜索确定。两 pad 处于不同高度（z 差 13mm），
-              pad-pad 方向倾斜，cube 沿该方向的半尺寸达 27.8mm（>最大半边 22mm）。
-              需 pad 中心距 > 2*(27.8+3)=61.6mm 才无穿透。r=0.003 配合下方
-              moving pad 外移，在 max open(angle=1.745) 时 gap=73mm 无穿透。
+            - radius=0.001: 配合下方 moving pad 外移 (-0.044) 增大 pad 间距，
+              保证有效内间隙 > cube 投影。r 越小有效间隙越大，但太小会减少接触
+              面积影响摩擦力，0.001 是平衡点。
             - 点接触 + condim=6 + friction=5.0: 高摩擦点接触足以夹住 cube。
             -->
             <geom name="fixed_jaw_pad" type="sphere" group="0"
@@ -55,10 +54,10 @@
                 <geom name="moving_jaw_collision" type="mesh" contype="0" conaffinity="0" group="0" pos="-5.55112e-17 -5.55112e-17 0.0189" quat="1 -0 3.00524e-16 -2.00834e-17" mesh="moving_jaw_so101_v1" material="moving_jaw_so101_v1_material"/>
                 <!--
                 活动颚内侧 fingerpad：高摩擦小球，朝向固定颚一侧。
-                与 fixed_jaw_pad 配对：同为 sphere r=0.003。moving_jaw 局部 -X
+                与 fixed_jaw_pad 配对：同为 sphere r=0.001。moving_jaw 局部 -X
                 方向在 world 中有较大分量沿 pad-pad 连线（dot=0.676），故在此
-                方向外移到 -0.036 以增大间距。经几何搜索验证：max open 时
-                gap=73mm、无穿透；angle≥0.465 时 cube 可无穿透放入。
+                方向外移到 -0.044 以增大间距。y=0.0043 补偿 hinge 旋转导致的
+                pad 世界 z 降低。经几何搜索验证：max open 时 gap 足够大、无穿透。
                 -->
                 <geom name="moving_jaw_pad" type="sphere" group="0"
                       size="0.001"
