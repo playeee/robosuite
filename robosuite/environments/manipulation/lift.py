@@ -435,8 +435,22 @@ class Lift(ManipulationEnv):
         )
         self.cube = BoxObject(
             name="cube",
-            size_min=[0.020, 0.020, 0.020],  # 立方体最小边长 2cm（注释为更早的默认值 1.5cm）
-            size_max=[0.022, 0.022, 0.022],  # 立方体最大边长 2.2cm（注释为更早的默认值 1.8cm）
+            # SO101 hinge 夹爪的两个 pad 在世界坐标系中 z 差约 4.6cm（机械结构限制，
+            # 无法通过 local 位置调整对齐），导致 pad-pad 连线倾斜。cube 沿该倾斜
+            # 方向的投影 = half * (|dx|+|dy|+|dz|)/|d| * 2 ≈ half * 1.62 * 2。
+            # 原尺寸 half=0.021 → 投影 0.071m > 有效内间隙 0.067m → 穿透 0.003m →
+            # 108N 法向力弹开 cube（表现为"穿模"）。减小到 half_max=0.020 后投影
+            # 0.065m < 0.067m，静态不穿透。
+            #
+            # 但减小尺寸后 cube 更轻（质量 ∝ size^3），接触力把轻 cube 弹得更远，
+            # 导致 pad 追上弹开的 cube 二次深穿透。因此同时增大 density（默认 1000
+            # → 4000，质量增大约 4 倍）让 cube 更难被弹开，以及增大 friction（默认
+            # [1,0.005,0.0001] → [3,0.01,0.001]）让 cube 与桌面摩擦更大（更难被
+            # 推动），同时 pad 与 cube 摩擦也增大（更容易夹住）。
+            size_min=[0.018, 0.018, 0.018],
+            size_max=[0.020, 0.020, 0.020],
+            density=8000,
+            friction=[3.0, 0.01, 0.001],
             rgba=[1, 0, 0, 1],
             material=redwood,
             rng=self.rng,

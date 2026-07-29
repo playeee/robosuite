@@ -5,26 +5,77 @@
     机器人本体 robot.xml 只保留 gripper body 作为挂载点；
     这里补充完整的夹爪几何体、活动颚关节、驱动器及 robosuite 需要的 eef sites / 力传感器。
     所有 mesh/material 名称与 robot.xml 中定义的一致，合并后由同一 prefix 处理。
+
+    修改说明：
+      - 在固定颚和活动颚的内侧各添加了一个薄 box 碰撞体（fingerpad），模拟
+        真实夹爪上的橡胶垫片。这些 fingerpad 具有极高的摩擦系数（5.0），
+        使 SO101 的 hinge 单指夹爪能够通过摩擦力夹住 cube。
+      - 原始的 mesh 碰撞体保留用于结构碰撞检测，但 contype=0 不参与
+        与 cube 的接触（避免大面积面接触导致 cube 被推开）。
+      - fingerpad 使用小尺寸 box，接触面积小（近似线接触），配合高摩擦，
+        能在不推开 cube 的前提下提供足够的夹持力。
     -->
     <worldbody>
         <body name="right_gripper" pos="0 0 0" quat="1 0 0 0">
             <!-- Part sts3215_03a_v1_5 -->
             <geom name="gripper_base_visual" type="mesh" contype="0" conaffinity="0" group="1" pos="0.0077 0.0001 -0.0234" quat="0.707107 -0.707107 1.66015e-15 6.45094e-15" mesh="sts3215_03a_v1" material="sts3215_03a_v1_material"/>
-            <geom name="gripper_base_collision" type="mesh" group="0" pos="0.0077 0.0001 -0.0234" quat="0.707107 -0.707107 1.66015e-15 6.45094e-15" mesh="sts3215_03a_v1" material="sts3215_03a_v1_material"/>
+            <geom name="gripper_base_collision" type="mesh" contype="0" conaffinity="0" group="0" pos="0.0077 0.0001 -0.0234" quat="0.707107 -0.707107 1.66015e-15 6.45094e-15" mesh="sts3215_03a_v1" material="sts3215_03a_v1_material"/>
             <!-- Part wrist_roll_follower_so101_v1（固定颚） -->
             <geom name="fixed_jaw_visual" type="mesh" contype="0" conaffinity="0" group="1" pos="8.32667e-17 -0.000218214 0.000949706" quat="0 1 0 0" mesh="wrist_roll_follower_so101_v1" material="wrist_roll_follower_so101_v1_material"/>
-            <geom name="fixed_jaw_collision" type="mesh" group="0" pos="8.32667e-17 -0.000218214 0.000949706" quat="0 1 0 0" mesh="wrist_roll_follower_so101_v1" material="wrist_roll_follower_so101_v1_material"/>
+            <geom name="fixed_jaw_collision" type="mesh" contype="0" conaffinity="0" group="0" pos="8.32667e-17 -0.000218214 0.000949706" quat="0 1 0 0" mesh="wrist_roll_follower_so101_v1" material="wrist_roll_follower_so101_v1_material"/>
+            <!--
+            固定颚内侧 fingerpad：高摩擦小球，朝向活动颚一侧。
+
+            关键设计变更（原先用 box 导致穿模）：
+            - 使用 sphere 而非 box：sphere 各向同性，闭合方向上的半尺寸恒为
+              radius，不受 pad 朝向影响。hinge 夹爪闭合时 pad 走圆弧，闭合方向
+              随角度变化，box 的长尺寸(0.018)会意外对齐闭合方向导致有效内间隙
+              (19mm) < cube(44mm) → 深穿透 → cube 被弹开（表现为"穿模"）。
+              sphere 彻底消除该方向依赖。
+            - radius=0.003: 经几何搜索确定。两 pad 处于不同高度（z 差 13mm），
+              pad-pad 方向倾斜，cube 沿该方向的半尺寸达 27.8mm（>最大半边 22mm）。
+              需 pad 中心距 > 2*(27.8+3)=61.6mm 才无穿透。r=0.003 配合下方
+              moving pad 外移，在 max open(angle=1.745) 时 gap=73mm 无穿透。
+            - 点接触 + condim=6 + friction=5.0: 高摩擦点接触足以夹住 cube。
+            -->
+            <geom name="fixed_jaw_pad" type="sphere" group="0"
+                  size="0.001"
+                  pos="0.014 -0.0002 0.0195"
+                  friction="5.0 0.01 0.0001" condim="6"
+                  rgba="0.2 0.8 0.2 0.6"
+                  solref="0.02 1.0" solimp="0.99 0.999 0.0001"
+                  margin="0.008"/>
             <!-- 力/力矩传感器挂载点 -->
             <site group="1" name="gripperframe" pos="-0.0079 -0.000218121 -0.0981274" quat="0.707107 -0 0.707107 -2.37788e-17" size="0.01 0.01 0.01" rgba="1 0 0 1" type="sphere"/>
             <!-- Link moving_jaw_so101_v1（活动颚） -->
             <body name="moving_jaw_so101_v1" pos="0.0202 0.0188 -0.0234" quat="0.707107 0.707107 -1.85362e-08 1.85362e-08">
-                <joint axis="0 0 1" name="gripper" type="hinge" range="-0.17453297762778586 1.7453291995659765" damping="0.60" frictionloss="0.052" armature="0.028"/>
+                <joint axis="0 0 1" name="gripper" type="hinge" range="-0.17453297762778586 1.7453291995659765" damping="2.0" frictionloss="0.052" armature="0.028"/>
                 <inertial pos="-0.00157495 -0.0300244 0.0192755" mass="0.012" fullinertia="6.61427e-06 1.89032e-06 5.28738e-06 -3.19807e-07 -5.90717e-09 -1.09945e-07"/>
                 <geom name="moving_jaw_visual" type="mesh" contype="0" conaffinity="0" group="1" pos="-5.55112e-17 -5.55112e-17 0.0189" quat="1 -0 3.00524e-16 -2.00834e-17" mesh="moving_jaw_so101_v1" material="moving_jaw_so101_v1_material"/>
-                <geom name="moving_jaw_collision" type="mesh" group="0" pos="-5.55112e-17 -5.55112e-17 0.0189" quat="1 -0 3.00524e-16 -2.00834e-17" mesh="moving_jaw_so101_v1" material="moving_jaw_so101_v1_material"/>
+                <geom name="moving_jaw_collision" type="mesh" contype="0" conaffinity="0" group="0" pos="-5.55112e-17 -5.55112e-17 0.0189" quat="1 -0 3.00524e-16 -2.00834e-17" mesh="moving_jaw_so101_v1" material="moving_jaw_so101_v1_material"/>
+                <!--
+                活动颚内侧 fingerpad：高摩擦小球，朝向固定颚一侧。
+                与 fixed_jaw_pad 配对：同为 sphere r=0.003。moving_jaw 局部 -X
+                方向在 world 中有较大分量沿 pad-pad 连线（dot=0.676），故在此
+                方向外移到 -0.036 以增大间距。经几何搜索验证：max open 时
+                gap=73mm、无穿透；angle≥0.465 时 cube 可无穿透放入。
+                -->
+                <geom name="moving_jaw_pad" type="sphere" group="0"
+                      size="0.001"
+                      pos="-0.044 0.0043 0.019"
+                      friction="5.0 0.01 0.0001" condim="6"
+                      rgba="0.2 0.8 0.2 0.6"
+                      solref="0.02 1.0" solimp="0.99 0.999 0.0001"
+                      margin="0.008"/>
             </body>
             <!-- robosuite 末端执行器参考系 -->
-            <body name="eef" pos="-0.0079 -0.000218121 -0.0981274" quat="0.707107 -0 0.707107 -2.37788e-17">
+            <!-- eef body 位置：与 pad 中点对齐（hinge angle=0.5 半开时）。
+                 pad 中点 = (fixed_pad + moving_pad) / 2，在 right_gripper 坐标系中
+                 = ((0.014+(-0.0205))/2, -0.0002, (0.0195+(-0.0407))/2)
+                 = (-0.0032, -0.0002, -0.0106)。
+                 grip_site 在 eef body 原点，故 eef body pos = pad 中点。
+                 这样机器人按 grip_site 定位时 pad 能对准 cube。 -->
+            <body name="eef" pos="-0.0032 -0.0002 -0.0106" quat="0.707107 -0 0.707107 -2.37788e-17">
                 <site name="grip_site" pos="0 0 0" size="0.01 0.01 0.01" rgba="1 0 0 0.5" type="sphere" group="1"/>
                 <site name="ee_x" pos="0.1 0 0" size="0.005 .1" quat="0.707105 0 0.707108 0" rgba="1 0 0 0" type="cylinder" group="1"/>
                 <site name="ee_y" pos="0 0.1 0" size="0.005 .1" quat="0.707105 0.707108 0 0" rgba="0 1 0 0" type="cylinder" group="1"/>

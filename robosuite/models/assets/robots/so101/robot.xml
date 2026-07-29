@@ -136,12 +136,20 @@
     <material name="wrist_roll_follower_so101_v1_material" rgba="1 0.82 0.12 1"/>
     <material name="moving_jaw_so101_v1_material" rgba="1 0.82 0.12 1"/>
   </asset>
+  <!--
+  机械臂执行器：使用 <motor>（力矩）而非 <position>（位置目标）。
+  robosuite 的 JointPositionController 内部计算力矩后写入 sim.data.ctrl，
+  若 XML 用 <position> 执行器，MuJoCo 会把 ctrl 当作位置目标而非力矩，
+  导致关节失控漂移（力矩值被当作弧度目标 → 关节飞到极限位置）。
+  改为 <motor> 后 ctrl 直接当作力矩施加，与 robosuite 控制器语义匹配。
+  forcerange 保留 STS3215 舵机的物理力矩限制 (±3.35 Nm)。
+  -->
   <actuator>
-    <position class="sts3215" name="shoulder_pan" joint="shoulder_pan" forcerange="-3.35 3.35" ctrlrange="-1.91986 1.91986"/>
-    <position class="sts3215" name="shoulder_lift" joint="shoulder_lift" forcerange="-3.35 3.35" ctrlrange="-1.74533 1.74533"/>
-    <position class="sts3215" name="elbow_flex" joint="elbow_flex" forcerange="-3.35 3.35" ctrlrange="-1.69 1.69"/>
-    <position class="sts3215" name="wrist_flex" joint="wrist_flex" forcerange="-3.35 3.35" ctrlrange="-1.65806 1.65806"/>
-    <position class="sts3215" name="wrist_roll" joint="wrist_roll" forcerange="-3.35 3.35" ctrlrange="-2.74385 2.84121"/>
-</actuator>
+    <motor name="shoulder_pan" joint="shoulder_pan" ctrllimited="true" ctrlrange="-3.35 3.35" gear="1"/>
+    <motor name="shoulder_lift" joint="shoulder_lift" ctrllimited="true" ctrlrange="-3.35 3.35" gear="1"/>
+    <motor name="elbow_flex" joint="elbow_flex" ctrllimited="true" ctrlrange="-3.35 3.35" gear="1"/>
+    <motor name="wrist_flex" joint="wrist_flex" ctrllimited="true" ctrlrange="-3.35 3.35" gear="1"/>
+    <motor name="wrist_roll" joint="wrist_roll" ctrllimited="true" ctrlrange="-3.35 3.35" gear="1"/>
+  </actuator>
   <equality/>
 </mujoco>
