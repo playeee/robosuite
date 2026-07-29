@@ -48,7 +48,9 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
-
+analysis_output/
+sac19_analysis/
+sac21_analysis/
 # Translations
 *.mo
 *.pot
